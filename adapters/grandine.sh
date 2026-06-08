@@ -79,23 +79,26 @@ echo "::group::Download consensus-spec-tests fixtures"
 bash scripts/download_spec_tests.sh 2>&1 | tee -a "${LOG_FILE}"
 echo "::endgroup::"
 
-# Pick crates to test. The "smoke" set targets a single crate that is known
-# to carry spec-test driven cases and that doesn't pull the entire workspace
-# graph; the "full" set runs the workspace test sweep.
+# Two run modes:
+#   smoke: scope down with nextest's -E filter so we only run one crate's tests,
+#          but keep workspace-level features so the workspace graph compiles.
+#   full:  match Grandine's own CI: workspace test with the same feature set.
+NEXTEST_ARGS=(--profile clive --release
+              --no-default-features
+              --features default-networks,arkworks,blst
+              --workspace
+              --exclude zkvm_host --exclude zkvm_guest_risc0
+              --exclude c_grandine --exclude csharp_grandine)
+
 case "${SCOPE}" in
-  smoke) CARGO_FILTERS=(-p fork_choice_control) ;;
-  full)  CARGO_FILTERS=(--workspace --exclude zkvm_host --exclude zkvm_guest_risc0 --exclude c_grandine --exclude csharp_grandine) ;;
+  smoke) NEXTEST_ARGS+=(-E 'package(fork_choice_control)') ;;
+  full)  : ;;  # run the full workspace
   *)     echo "::error::unknown CLIVE_TEST_SCOPE: ${SCOPE}"; exit 1 ;;
 esac
 
-echo "::group::cargo nextest run --profile clive ${CARGO_FILTERS[*]}"
+echo "::group::cargo nextest run ${NEXTEST_ARGS[*]}"
 set +e
-cargo nextest run \
-  --profile clive \
-  --release \
-  --no-default-features \
-  --features default-networks,arkworks,blst \
-  "${CARGO_FILTERS[@]}" 2>&1 | tee -a "${LOG_FILE}"
+cargo nextest run "${NEXTEST_ARGS[@]}" 2>&1 | tee -a "${LOG_FILE}"
 RC=$?
 set -e
 echo "nextest exit: ${RC}"
