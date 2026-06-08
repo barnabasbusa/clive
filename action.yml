@@ -1,0 +1,166 @@
+name: 'Clive'
+description: >-
+  Run a consensus-layer client's spec-test suite against canonical
+  consensus-spec-tests fixtures and emit hive-ui-compatible results.
+author: 'ethpandaops'
+branding:
+  icon: 'check-circle'
+  color: 'blue'
+
+inputs:
+  cl_client:
+    description: 'CL client to test. v0: only `lodestar` is supported.'
+    required: true
+    default: 'lodestar'
+  cl_source_repo:
+    description: 'Client source repo (e.g. ChainSafe/lodestar). Defaults to the canonical repo for `cl_client`.'
+    required: false
+    default: ''
+  cl_source_ref:
+    description: 'Tag, branch or commit to check out and build.'
+    required: true
+  consensus_spec_tests_ref:
+    description: 'Tag of ethereum/consensus-spec-tests to use as fixtures (e.g. v1.7.0-alpha.10). Empty = use the version pinned in the client repo.'
+    required: false
+    default: ''
+  network:
+    description: 'Devnet/network label, used in the emitted TestRun rows and the S3 path.'
+    required: true
+  fail_on:
+    description: 'Comma-separated spec-test categories that hard-fail the job when any test in them fails.'
+    required: false
+    default: 'sanity,operations,epoch_processing,transition,random,finality'
+
+  # Upload — mirrors ethpandaops/hive-github-action's interface verbatim
+  s3_upload:
+    description: 'If true, upload results to S3 via rclone.'
+    required: false
+    default: 'false'
+  s3_bucket:
+    description: 'S3 bucket. Defaults to `hive-results` so hive-ui can ingest without new infra.'
+    required: false
+    default: 'hive-results'
+  s3_path:
+    description: 'Path under the S3 bucket. Typical: `spec-<network>`.'
+    required: false
+    default: ''
+  s3_public_url:
+    description: 'Public URL prefix that maps to `s3_path` (for `simLog` and drill-in links).'
+    required: false
+    default: ''
+  rclone_config:
+    description: 'rclone config contents. Required if `s3_upload=true`.'
+    required: false
+    default: ''
+  rclone_version:
+    description: 'rclone version to install on the runner.'
+    required: false
+    default: 'v1.68.2'
+  workflow_artifact_upload:
+    description: 'If true, also upload the `out/` directory as a workflow artifact.'
+    required: false
+    default: 'true'
+
+outputs:
+  ntests:
+    description: 'Total tests executed.'
+    value: ${{ steps.summarize.outputs.ntests }}
+  passes:
+    description: 'Tests passed.'
+    value: ${{ steps.summarize.outputs.passes }}
+  fails:
+    description: 'Tests failed.'
+    value: ${{ steps.summarize.outputs.fails }}
+  result_url:
+    description: 'Public URL of the result manifest (empty if not uploaded).'
+    value: ${{ steps.upload.outputs.result_url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate client
+      shell: bash
+      env:
+        CL_CLIENT: ${{ inputs.cl_client }}
+      run: |
+        case "$CL_CLIENT" in
+          lodestar) ;;
+          *)
+            echo "::error::clive v0 only supports cl_client=lodestar (got: $CL_CLIENT)"
+            exit 1
+            ;;
+        esac
+
+    - name: Resolve adapter inputs
+      id: resolve
+      shell: bash
+      env:
+        CL_CLIENT: ${{ inputs.cl_client }}
+        CL_SOURCE_REPO: ${{ inputs.cl_source_repo }}
+        NETWORK: ${{ inputs.network }}
+        S3_PATH: ${{ inputs.s3_path }}
+      run: ${{ github.action_path }}/lib/resolve.sh
+
+    - name: Set up Node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: '22'
+
+    - name: Run Lodestar spec tests
+      id: run
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        OUT_DIR: ${{ github.action_path }}/out
+        CL_SOURCE_REPO: ${{ steps.resolve.outputs.cl_source_repo }}
+        CL_SOURCE_REF: ${{ inputs.cl_source_ref }}
+        CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
+        NETWORK: ${{ inputs.network }}
+      run: ${{ github.action_path }}/adapters/lodestar.sh
+
+    - name: Normalise results into hive-ui schema
+      id: summarize
+      shell: bash
+      env:
+        OUT_DIR: ${{ github.action_path }}/out
+        CL_CLIENT: ${{ inputs.cl_client }}
+        CL_SOURCE_REF: ${{ inputs.cl_source_ref }}
+        CONSENSUS_SPEC_TESTS_REF: ${{ steps.run.outputs.consensus_spec_tests_ref }}
+        NETWORK: ${{ inputs.network }}
+        CLIENT_VERSION: ${{ steps.run.outputs.client_version }}
+      run: ${{ github.action_path }}/lib/junit-to-hive.py
+
+    - name: Install rclone
+      if: inputs.s3_upload == 'true'
+      shell: bash
+      env:
+        RCLONE_VERSION: ${{ inputs.rclone_version }}
+      run: ${{ github.action_path }}/lib/install-rclone.sh
+
+    - name: Upload to S3
+      id: upload
+      if: inputs.s3_upload == 'true'
+      shell: bash
+      env:
+        OUT_DIR: ${{ github.action_path }}/out
+        S3_BUCKET: ${{ inputs.s3_bucket }}
+        S3_PATH: ${{ steps.resolve.outputs.s3_path }}
+        S3_PUBLIC_URL: ${{ inputs.s3_public_url }}
+        RCLONE_CONFIG: ${{ inputs.rclone_config }}
+      run: ${{ github.action_path }}/lib/upload-s3.sh
+
+    - name: Upload workflow artifact
+      if: inputs.workflow_artifact_upload == 'true'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: clive-${{ inputs.cl_client }}-${{ inputs.cl_source_ref }}-${{ inputs.network }}
+        path: ${{ github.action_path }}/out/
+        if-no-files-found: error
+        retention-days: 14
+
+    - name: Gate
+      shell: bash
+      env:
+        OUT_DIR: ${{ github.action_path }}/out
+        FAIL_ON: ${{ inputs.fail_on }}
+      run: ${{ github.action_path }}/lib/gate.sh

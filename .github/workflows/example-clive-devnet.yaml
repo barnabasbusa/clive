@@ -1,0 +1,42 @@
+name: Clive - Example (Lodestar against a devnet)
+#
+# Reference workflow showing how to call clive from a devnet repo.
+# Drop a copy into ethpandaops/<devnet>-devnets/.github/workflows/
+# and bump the inputs as needed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      cl_source_ref:
+        description: 'Lodestar tag/branch/SHA'
+        required: true
+        default: 'unstable'
+      consensus_spec_tests_ref:
+        description: 'consensus-spec-tests release (empty = use lodestar pin)'
+        required: false
+        default: ''
+      network:
+        description: 'Devnet label (used in S3 path)'
+        required: true
+        default: 'glamsterdam-devnet-5'
+  schedule:
+    - cron: '0 */6 * * *'
+
+jobs:
+  lodestar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: barnabasbusa/clive@main
+        with:
+          cl_client: lodestar
+          cl_source_ref: ${{ inputs.cl_source_ref || 'unstable' }}
+          consensus_spec_tests_ref: ${{ inputs.consensus_spec_tests_ref }}
+          network: ${{ inputs.network || 'glamsterdam-devnet-5' }}
+          fail_on: 'sanity,operations,epoch_processing,transition,random,finality'
+          s3_upload: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
+          s3_path: ${{ format('spec-{0}', inputs.network || 'glamsterdam-devnet-5') }}
+          s3_public_url: ${{ format('https://hive.ethpandaops.io/spec-{0}/', inputs.network || 'glamsterdam-devnet-5') }}
+          rclone_config: ${{ secrets.HIVE_RCLONE_CONFIG }}
+          workflow_artifact_upload: true
