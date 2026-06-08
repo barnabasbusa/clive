@@ -89,10 +89,23 @@ case "${SCOPE}" in
     echo "::error::unknown CLIVE_TEST_SCOPE: ${SCOPE}"; exit 1 ;;
 esac
 
-# `expandRefTests` is the umbrella that pulls fixtures into resources/.
+# Gradle 9 validates implicit cross-task dependencies and fails the build when
+# generateReferenceTestClasses reads files that another task produces without a
+# declared dependsOn. Teku's build.gradle wires that dependency by side effect,
+# which gradle 8 accepted. Splitting into two invocations sidesteps the validator
+# entirely: expandRefTests fully completes (the producer side), then referenceTest
+# runs in a separate gradle session that just sees the on-disk inputs.
 set +e
-./gradlew --no-daemon --console=plain expandRefTests "${GRADLE_TASK}" "${GRADLE_FILTER[@]}" 2>&1 | tee -a "${LOG_FILE}"
+./gradlew --no-daemon --console=plain expandRefTests 2>&1 | tee -a "${LOG_FILE}"
 RC=$?
+if [[ ${RC} -ne 0 ]]; then
+  echo "::error::expandRefTests failed (gradle exit: ${RC})"
+  set -e
+  echo "::endgroup::"
+else
+  ./gradlew --no-daemon --console=plain "${GRADLE_TASK}" "${GRADLE_FILTER[@]}" 2>&1 | tee -a "${LOG_FILE}"
+  RC=$?
+fi
 set -e
 echo "gradle exit: ${RC}"
 echo "::endgroup::"
