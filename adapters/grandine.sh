@@ -32,13 +32,18 @@ LOG_FILE="${OUT_DIR}/grandine.log"
 META_FILE="${OUT_DIR}/clive-meta.json"
 SCOPE="${CLIVE_TEST_SCOPE:-smoke}"
 
-echo "::group::Clone ${CL_SOURCE_REPO}@${CL_SOURCE_REF}"
+echo "::group::Clone ${CL_SOURCE_REPO}@${CL_SOURCE_REF} (with submodules)"
 rm -rf "${SRC_DIR}"
-if ! git clone --depth 1 --branch "${CL_SOURCE_REF}" \
-  "https://github.com/${CL_SOURCE_REPO}.git" "${SRC_DIR}" 2>&1 | tee -a "${LOG_FILE}"; then
+# Grandine vendors eth2_libp2p (and others) via git submodules. A plain shallow
+# clone leaves the workspace member directories empty and cargo fails on metadata.
+if ! git clone --depth 1 --recurse-submodules --shallow-submodules \
+       --branch "${CL_SOURCE_REF}" \
+       "https://github.com/${CL_SOURCE_REPO}.git" "${SRC_DIR}" 2>&1 | tee -a "${LOG_FILE}"; then
   rm -rf "${SRC_DIR}"
-  git clone "https://github.com/${CL_SOURCE_REPO}.git" "${SRC_DIR}" 2>&1 | tee -a "${LOG_FILE}"
+  git clone --recurse-submodules \
+    "https://github.com/${CL_SOURCE_REPO}.git" "${SRC_DIR}" 2>&1 | tee -a "${LOG_FILE}"
   git -C "${SRC_DIR}" checkout "${CL_SOURCE_REF}" 2>&1 | tee -a "${LOG_FILE}"
+  git -C "${SRC_DIR}" submodule update --init --recursive 2>&1 | tee -a "${LOG_FILE}"
 fi
 RESOLVED_SHA=$(git -C "${SRC_DIR}" rev-parse HEAD)
 echo "resolved HEAD: ${RESOLVED_SHA}"
