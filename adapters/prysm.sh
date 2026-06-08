@@ -77,28 +77,34 @@ HARVEST_DIR="${OUT_DIR}/junit"
 TESTLOGS_DIR="${SRC_DIR}/bazel-testlogs"
 SUITES_JSON='[]'
 COUNT=0
-if [[ -d "${TESTLOGS_DIR}" ]]; then
+# bazel-testlogs is a symlink into bazel-out/.../testlogs; -L makes find follow it.
+if [[ -e "${TESTLOGS_DIR}" ]]; then
   while IFS= read -r xml; do
-    rel="${xml#${TESTLOGS_DIR}/}"
+    # Use realpath so $rel doesn't carry the symlink-y prefix.
+    real_root=$(readlink -f "${TESTLOGS_DIR}" 2>/dev/null || echo "${TESTLOGS_DIR}")
+    rel="${xml#${real_root}/}"
+    rel="${rel#${TESTLOGS_DIR}/}"
     flat=$(echo "${rel}" | tr '/' '_')
     cp "${xml}" "${HARVEST_DIR}/${flat}"
     COUNT=$((COUNT+1))
-  done < <(find "${TESTLOGS_DIR}" -name "test.xml" -type f 2>/dev/null)
+  done < <(find -L "${TESTLOGS_DIR}" -name "test.xml" -type f 2>/dev/null)
 fi
 echo "harvested ${COUNT} JUnit file(s)"
 ls -lah "${HARVEST_DIR}" | tee -a "${LOG_FILE}"
 
+shopt -s nullglob
 for f in "${HARVEST_DIR}"/*.xml; do
   base=$(basename "${f}")
   # Best-effort: infer preset/category from the file path. testing/spectest/general/
   # = preset-agnostic categories (bls, kzg, ssz_generic).
   case "${base}" in
-    *general_bls*) cat="bls"; preset="" ;;
+    *general_bls*)         cat="bls";         preset="" ;;
     *general_ssz_generic*) cat="ssz_generic"; preset="" ;;
-    *general_kzg*) cat="kzg"; preset="" ;;
-    *minimal_*) cat=""; preset="minimal" ;;
-    *mainnet_*) cat=""; preset="mainnet" ;;
-    *) cat=""; preset="" ;;
+    *general_kzg*)         cat="kzg";         preset="" ;;
+    *general*)             cat="";            preset="" ;;
+    *minimal*)             cat="";            preset="minimal" ;;
+    *mainnet*)             cat="";            preset="mainnet" ;;
+    *)                     cat="";            preset="" ;;
   esac
   SUITES_JSON=$(jq --arg jf "${base}" \
                   --arg category "${cat}" \
@@ -106,6 +112,7 @@ for f in "${HARVEST_DIR}"/*.xml; do
     '. + [{junit_file:$jf, project:"prysm:bazel-spectest", preset:$preset, fork:"", category:$category, subcategory:null}]' \
     <<<"${SUITES_JSON}")
 done
+shopt -u nullglob
 echo "::endgroup::"
 
 EFFECTIVE_REF="${CONSENSUS_SPEC_TESTS_REF:-unknown}"
