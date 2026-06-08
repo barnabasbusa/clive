@@ -2,6 +2,13 @@ name: Smoke
 # Manual-only workflow for testing clive itself against a real CL client.
 # Uses the local action.yml (./) so changes on this branch are exercised
 # without needing to publish a tag.
+#
+# The run-name expression below is what shows up in the Actions list so each
+# row tells you at a glance which client / source ref / scope is being
+# exercised, e.g. "Smoke lodestar@glamsterdam-devnet-5 [bls]".
+run-name: >-
+  Smoke ${{ inputs.cl_client }}@${{ inputs.cl_source_ref || 'latest-release' }}
+  [${{ inputs.scope || 'default' }}]${{ inputs.consensus_spec_tests_ref && format(' fixtures={0}', inputs.consensus_spec_tests_ref) || '' }}
 
 on:
   workflow_dispatch:
