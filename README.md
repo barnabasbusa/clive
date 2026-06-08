@@ -11,18 +11,16 @@ fixtures and ships the results in
 is to its **EL** view: same `listing.jsonl` + `results/*.json` schema, same
 S3 bucket, same CloudFront host, different data path.
 
-## v0 scope
+## Supported clients
 
-- One client: **Lodestar**.
-- One toolchain step: `git clone` → `yarn install` → `yarn build` →
-  `yarn download-spec-tests` → `yarn test:spec`.
-- Output: hive-ui `listing.jsonl` + `results/*.json`, optionally uploaded to
-  S3.
-- Optional gate: job exits non-zero when any test in the configured
-  `fail_on` categories fails.
-
-Multi-client support (`lighthouse`, `teku`, `prysm`, `nimbus`, `grandine`)
-lands in subsequent PRs.
+| Client     | Source repo                  | Toolchain        | Test target                                    |
+|------------|------------------------------|------------------|------------------------------------------------|
+| lodestar   | `ChainSafe/lodestar`         | Node 24 + pnpm   | `pnpm exec vitest run` per scope               |
+| lighthouse | `sigp/lighthouse`            | Rust + nextest   | `cargo nextest run --profile clive -p ef_tests`|
+| nimbus     | `status-im/nimbus-eth2`      | nim (bootstrapped) | `consensus_spec_tests_<preset> --xml:...`    |
+| teku       | `Consensys/teku`             | JDK 25 + Gradle  | `:eth-reference-tests:referenceTest`           |
+| prysm      | `prysmaticlabs/prysm`        | Go + Bazel       | `bazel test //testing/spectest/...`            |
+| grandine   | `grandinetech/grandine`      | Rust + nextest   | `cargo nextest run` filtered by package        |
 
 ## Usage
 
@@ -32,122 +30,165 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: ethpandaops/clive@master         # ← swap to barnabasbusa/clive@master while still on the fork
+      - uses: ethpandaops/clive@master          # or barnabasbusa/clive@master on the fork
         with:
           cl_client: lodestar
-          cl_source_ref: v1.43.0
-          # consensus_spec_tests_ref: v1.7.0-alpha.10  # leave empty to use lodestar's pin (v0)
+          cl_source_ref: glamsterdam-devnet-5   # tag, branch, sha; empty = latest release
+          consensus_spec_tests_ref: v1.7.0-alpha.10  # empty = use client's pin
           network: glamsterdam-devnet-5
+          scope: bls                            # adapter-specific; empty = adapter default
           fail_on: sanity,operations,epoch_processing,transition,random,finality
-          s3_upload: true
+          s3_upload: 'true'
           s3_path: spec-glamsterdam-devnet-5
-          s3_public_url: https://hive.ethpandaops.io/spec-glamsterdam-devnet-5/
           rclone_config: ${{ secrets.HIVE_RCLONE_CONFIG }}
 ```
 
 A complete reference workflow lives in
 [`.github/workflows/example-clive-devnet.yaml`](.github/workflows/example-clive-devnet.yaml).
+The internal smoke workflow at
+[`.github/workflows/smoke.yml`](.github/workflows/smoke.yml) is the canonical
+example of calling `clive` against any single client.
 
 ## Inputs
 
-| name | default | required | description |
-| --- | --- | --- | --- |
-| `cl_client` | `lodestar` | yes | Client to test. v0 accepts only `lodestar`. |
-| `cl_source_repo` | _(per-client default)_ | no | Override the source repo (e.g. fork or hard-pinned org). |
-| `cl_source_ref` | _(empty → latest release)_ | no | Tag, branch, or commit SHA to clone and build. Empty resolves to the latest non-prerelease GitHub release of `cl_source_repo`. |
-| `consensus_spec_tests_ref` | _(client's pin)_ | no | `ethereum/consensus-spec-tests` release tag. Empty = use the version pinned in the client source. Setting a different value patches the client's pin in-place before download (Lodestar). |
-| `network` | — | yes | Devnet/network label used in result naming and S3 path. |
-| `fail_on` | `sanity,operations,epoch_processing,transition,random,finality` | no | Categories that hard-fail the job when at least one of their tests fails. |
-| `s3_upload` | `false` | no | Push `results/`, `listing.jsonl` and the run log to S3 via rclone. |
-| `s3_bucket` | `hive-results` | no | Bucket name. Default matches hive-ui's CDN already pointed at this bucket. |
-| `s3_path` | _(empty)_ | no | Path under the bucket. Defaults to `spec-<network>`. |
-| `s3_public_url` | _(derived)_ | no | Public URL prefix the path is exposed at. Defaults to `https://hive.ethpandaops.io/<s3_path>/`. |
-| `rclone_config` | — | conditional | rclone config contents. Required when `s3_upload=true`. |
-| `rclone_version` | `v1.68.2` | no | Pinned rclone version. |
-| `workflow_artifact_upload` | `true` | no | Also upload `out/` as a workflow artifact. |
+Required:
+
+| name            | description                                |
+|-----------------|--------------------------------------------|
+| `cl_client`     | lodestar/lighthouse/nimbus/teku/prysm/grandine |
+| `network`       | devnet label used in result naming + S3 path   |
+
+Source:
+
+| name                       | default                  | description                       |
+|----------------------------|--------------------------|-----------------------------------|
+| `cl_source_repo`           | per-client default       | override the source GitHub repo   |
+| `cl_source_ref`            | latest non-pre release   | tag, branch, or commit SHA        |
+| `consensus_spec_tests_ref` | client's own pin         | force a specific fixtures version |
+| `scope`                    | adapter default          | which suites to run (see below)   |
+
+Gate:
+
+| name      | default                                                       | description |
+|-----------|---------------------------------------------------------------|-------------|
+| `fail_on` | `sanity,operations,epoch_processing,transition,random,finality` | categories whose failures hard-fail the job |
+
+S3 upload (matches `ethpandaops/hive-github-action`):
+
+| name                       | default        | description                                |
+|----------------------------|----------------|--------------------------------------------|
+| `s3_upload`                | `false`        | push results + listing.jsonl + log to S3   |
+| `s3_bucket`                | `hive-results` | reuses hive-ui's existing CDN-fronted bucket |
+| `s3_path`                  | `spec-<network>` | path under the bucket                    |
+| `s3_public_url`            | derived        | public URL prefix used in result manifests |
+| `rclone_config`            | —              | required when `s3_upload=true`             |
+| `rclone_version`           | `v1.68.2`      | pinned rclone version                      |
+| `workflow_artifact_upload` | `true`         | also upload `out/` as a workflow artifact  |
+
+### Per-adapter `scope` values
+
+| Client     | Accepted scopes                                                | Default  |
+|------------|----------------------------------------------------------------|----------|
+| lodestar   | `bls`, `general`, `minimal`, `mainnet`, `full`                 | `full`   |
+| lighthouse | `smoke` (bls only), `full`                                     | `full`   |
+| nimbus     | `minimal`, `mainnet`, `full`                                   | `minimal`|
+| teku       | `smoke` (BlsTests only), `full`                                | `smoke`  |
+| prysm      | `smoke` (general/...), `full` (all spectest packages)          | `smoke`  |
+| grandine   | `smoke` (fork_choice_control only), `full` (workspace)         | `smoke`  |
 
 ## Outputs
 
-| name | description |
-| --- | --- |
-| `ntests` | Total tests executed across all categories/presets/forks. |
-| `passes` | Total passing. |
-| `fails` | Total failing. |
-| `result_url` | Public URL of the manifest (empty when `s3_upload=false`). |
+| name         | description                                         |
+|--------------|-----------------------------------------------------|
+| `ntests`     | total tests executed across all suites              |
+| `passes`     | total passing                                       |
+| `fails`      | total failing                                       |
+| `result_url` | public URL of the manifest (empty without S3 upload)|
 
 ## Output schema
 
-Two artefacts land under the action's `out/` directory and are uploaded
-verbatim:
+Every adapter writes the same shape into `${{ runner.temp }}/clive-out/`:
 
 ```
-out/
-├── lodestar.log                 # raw build + test stdout
-├── junit/lodestar-spec.xml      # vitest JUnit emission
-├── results/
-│   ├── 1780910000-<sha>.json   # one TestDetail per (category, preset, fork)
+clive-out/
+├── <client>.log                  # raw build + test stdout
+├── junit/
+│   ├── <suite>.xml               # one or more JUnit XML files
 │   └── ...
-└── listing-fragment.jsonl       # one TestRun row per file above
+├── clive-meta.json               # adapter-declared classification (schema: lib/clive-meta.schema.json)
+├── results/
+│   └── <ts>-<sha>.json           # one TestDetail per suite (hive-ui-compatible)
+└── listing-fragment.jsonl        # one TestRun row per suite (hive-ui-compatible)
 ```
 
-The shape of `TestRun` and `TestDetail` matches
-[`ethpandaops/hive-ui` `src/types/index.ts`](https://github.com/ethpandaops/hive-ui/blob/main/src/types/index.ts);
-clive adds three additive optional fields per row (`category`, `preset`,
-`fork`) that hive-ui's planned `/cl` summary view uses to render the
-client × category × fork matrix.
+`TestRun` and `TestDetail` match
+[`ethpandaops/hive-ui` `src/types/index.ts`](https://github.com/ethpandaops/hive-ui/blob/main/src/types/index.ts).
+Clive adds optional fields per row (`category`, `preset`, `fork`,
+`subcategory`, `consensus_spec_tests_ref`, `network`) for the planned
+`/cl` matrix view.
 
-## Architecture
+### `clive-meta.json`
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│  devnet repo (e.g. ethpandaops/glamsterdam-devnets)                        │
-│  .github/workflows/clive-devnet-5.yaml  ── matrix: cl-client × source-ref  │
-└──────────────────────────────────┬─────────────────────────────────────────┘
-                                   │ uses: ethpandaops/clive@master
-                                   ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│  ethpandaops/clive (this repo)                                              │
-│    action.yml ── lib/resolve.sh → adapters/lodestar.sh                      │
-│                                         └── git clone, yarn build/test     │
-│                                         └── emit JUnit XML                  │
-│                  lib/junit-to-hive.py ── JUnit → listing.jsonl + results/   │
-│                  lib/upload-s3.sh    ── rclone push                          │
-│                  lib/gate.sh         ── exit !=0 if a gated category failed │
-└──────────────────────────────────┬─────────────────────────────────────────┘
-                                   ▼
-                          s3://hive-results/spec-<network>/
-                                   │ (existing CloudFront)
-                                   ▼
-                  https://hive.ethpandaops.io/spec-<network>/
-                                   │
-                          discovery.json entry
-                                   ▼
-                          ethpandaops/hive-ui  (/cl view)
-```
+Authoritative declaration of what the adapter just ran. Read by
+`lib/junit-to-hive.py` so per-suite preset/fork/category come from the
+adapter (not heuristic name parsing). See
+[`lib/clive-meta.schema.json`](lib/clive-meta.schema.json) for the
+contract.
 
 ## Ref resolution
 
 `cl_source_ref` accepts:
 
 - An explicit **tag** (e.g. `v1.43.0`).
-- An explicit **branch** (e.g. `unstable`).
+- An explicit **branch** (e.g. `glamsterdam-devnet-5`).
 - An explicit **commit SHA** (any length git accepts).
-- **Empty** → resolves to the latest non-prerelease GitHub release of
-  `cl_source_repo` via the GH API. The action's `gh` invocation uses
-  `${{ github.token }}`, so no extra secret is required.
+- **Empty** → latest non-prerelease GitHub release of `cl_source_repo`
+  via the GH API. The action's `gh` invocation uses `${{ github.token }}`,
+  so no extra secret is required.
 
 `consensus_spec_tests_ref` accepts the same forms (any tag of
-`ethereum/consensus-spec-tests`). Empty falls back to whatever the client
-source tree pins. Setting it to anything else overrides the pin in-place
-before download.
+`ethereum/consensus-spec-tests`). Empty falls back to whatever the
+client source tree pins. Setting a different value:
 
-## Roadmap
+- **Lodestar** — patches `spec-tests-version.json` in-place
+- **Teku** — patches `def refTestVersion` in `build.gradle` in-place
+- **Lighthouse** — forwards via `CONSENSUS_SPECS_TEST_VERSION` env
+- **Grandine** — forwards via `SPEC_VERSION` env to `download_spec_tests.sh`
+- **Nimbus** — forwards via `CONSENSUS_TEST_VECTOR_VERSIONS` env
+- **Prysm** — *not* honoured: `WORKSPACE` SHA-pins per flavor; override
+  would require recomputing SHAs. clive-meta records the effective ref
+  accurately so the mismatch is surfaced.
 
-- v0 (this): Lodestar only, JUnit → hive schema, S3 upload, gate, ref
-  resolution (commits/tags/latest-release), spec-tests override.
-- v0.1: Lighthouse adapter (cargo + `Swatinem/rust-cache`).
-- v0.2: Teku, Prysm, Nimbus, Grandine adapters.
-- v0.3: Aggregated index workflow, hive-ui `/cl` matrix summary view.
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ devnet repo (e.g. ethpandaops/glamsterdam-devnets)       │
+│ .github/workflows/clive-devnet-N.yaml                    │
+│   matrix: cl_client × cl_source_ref × scope              │
+└──────────────────────────┬───────────────────────────────┘
+                           │ uses: ethpandaops/clive@master
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ ethpandaops/clive (this repo)                            │
+│ action.yml ── lib/resolve.sh → adapters/<client>.sh      │
+│   per-client toolchain step (Node / Rust / nim / JDK /   │
+│   Go+Bazel) gated on cl_client                           │
+│ lib/junit-to-hive.py — JUnit + clive-meta → hive schema  │
+│ lib/upload-s3.sh    — AnimMouse/setup-rclone + push      │
+│ lib/regen-listing.py — regen listing.jsonl from results  │
+│ lib/gate.sh         — exit !=0 on gated category fails   │
+└──────────────────────────┬───────────────────────────────┘
+                           ▼
+            s3://hive-results/spec-<network>/
+                           │ (existing CloudFront)
+                           ▼
+            https://hive.ethpandaops.io/spec-<network>/
+                           │
+                  discovery.json entry
+                           ▼
+            ethpandaops/hive-ui (/cl view, planned)
+```
 
 ## License
 
