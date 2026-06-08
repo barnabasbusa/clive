@@ -1,61 +1,54 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Upload the normalised results to S3 and emit a public result_url.
+# Upload normalised results to S3 and (re)generate listing.jsonl from the full
+# `results/` set. Mirrors the pattern hive-github-action uses for its own
+# listing.jsonl: don't append, regenerate from the source of truth.
 #
 # Inputs (env):
-#   OUT_DIR         - contains results/*.json + listing-fragment.jsonl
-#   S3_BUCKET       - default 'hive-results'
+#   ACTION_PATH     - composite action root (for invoking lib/regen-listing.py)
+#   OUT_DIR         - contains results/*.json + lodestar.log
+#   S3_BUCKET       - bucket name (default 'hive-results' resolved upstream)
 #   S3_PATH         - e.g. spec-glamsterdam-devnet-5
-#   S3_PUBLIC_URL   - optional; used for the result_url output
-#   RCLONE_CONFIG   - inline rclone config contents
+#   S3_PUBLIC_URL   - optional public URL prefix for the result_url output
+#
+# Assumes rclone is already set up via AnimMouse/setup-rclone with a remote
+# named `s3` (hive-github-action's convention).
 
-if [[ -z "${RCLONE_CONFIG:-}" ]]; then
-  echo "::error::rclone_config is empty; cannot upload"
-  exit 1
-fi
+REMOTE="s3"
 
-CONFIG_FILE=$(mktemp)
-echo "${RCLONE_CONFIG}" > "${CONFIG_FILE}"
-trap 'rm -f "${CONFIG_FILE}"' EXIT
-
-# Convention: the rclone remote is named after the bucket. Matches the syncoor
-# convention so we can reuse the existing rclone_config secret unchanged.
-REMOTE="${S3_BUCKET}"
-
-echo "::group::Upload results/"
-if [[ -d "${OUT_DIR}/results" ]]; then
-  rclone --config "${CONFIG_FILE}" copy \
+echo "::group::Push results/ to S3"
+if [[ -d "${OUT_DIR}/results" && -n "$(ls -A "${OUT_DIR}/results" 2>/dev/null)" ]]; then
+  rclone copy --no-traverse \
     "${OUT_DIR}/results/" \
     "${REMOTE}:${S3_BUCKET}/${S3_PATH}/results/"
+else
+  echo "::warning::no results/*.json to upload"
 fi
 echo "::endgroup::"
 
-echo "::group::Append listing.jsonl"
-# Fetch the existing listing (if any), prepend our fragment, dedupe by fileName,
-# then re-upload. This mirrors what hive's index workflow does.
-TMP_LISTING=$(mktemp)
-rclone --config "${CONFIG_FILE}" cat \
-  "${REMOTE}:${S3_BUCKET}/${S3_PATH}/listing.jsonl" 2>/dev/null > "${TMP_LISTING}" || true
-
-# Newest-first: our fragment lines first, then existing lines (deduped by fileName).
-cat "${OUT_DIR}/listing-fragment.jsonl" "${TMP_LISTING}" \
-  | awk '!seen[$0]++' \
-  | head -n 1000 > "${TMP_LISTING}.new"
-
-rclone --config "${CONFIG_FILE}" copyto \
-  "${TMP_LISTING}.new" \
-  "${REMOTE}:${S3_BUCKET}/${S3_PATH}/listing.jsonl"
-
-rm -f "${TMP_LISTING}" "${TMP_LISTING}.new"
-echo "::endgroup::"
-
-echo "::group::Upload run log"
+echo "::group::Push run log"
 if [[ -f "${OUT_DIR}/lodestar.log" ]]; then
-  rclone --config "${CONFIG_FILE}" copy \
-    "${OUT_DIR}/lodestar.log" \
-    "${REMOTE}:${S3_BUCKET}/${S3_PATH}/"
+  rclone copy "${OUT_DIR}/lodestar.log" "${REMOTE}:${S3_BUCKET}/${S3_PATH}/"
 fi
+echo "::endgroup::"
+
+echo "::group::Regenerate listing.jsonl from full results set"
+TMP_RESULTS=$(mktemp -d)
+trap 'rm -rf "${TMP_RESULTS}"' EXIT
+
+# Pull every result back down so the listing reflects all historical runs, not
+# just this one.
+rclone copy --progress --transfers=50 --include "*.json" \
+  "${REMOTE}:${S3_BUCKET}/${S3_PATH}/results/" "${TMP_RESULTS}/" || true
+
+LISTING="${OUT_DIR}/listing.jsonl"
+python3 "${ACTION_PATH}/lib/regen-listing.py" \
+  --results-dir "${TMP_RESULTS}" \
+  --output "${LISTING}"
+
+echo "regenerated $(wc -l < "${LISTING}" | tr -d ' ') row(s) into ${LISTING}"
+rclone copyto "${LISTING}" "${REMOTE}:${S3_BUCKET}/${S3_PATH}/listing.jsonl"
 echo "::endgroup::"
 
 PUBLIC_URL="${S3_PUBLIC_URL:-https://hive.ethpandaops.io/${S3_PATH}/}"

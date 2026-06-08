@@ -130,23 +130,23 @@ runs:
         CLIENT_VERSION: ${{ steps.run.outputs.client_version }}
       run: ${{ github.action_path }}/lib/junit-to-hive.py
 
-    - name: Install rclone
+    - name: Setup rclone for S3 upload
       if: inputs.s3_upload == 'true'
-      shell: bash
-      env:
-        RCLONE_VERSION: ${{ inputs.rclone_version }}
-      run: ${{ github.action_path }}/lib/install-rclone.sh
+      uses: AnimMouse/setup-rclone@0d99fa3878a334d3e307c1a8372ad55550fdaea7 # v1.11.0
+      with:
+        rclone_config: ${{ inputs.rclone_config }}
+        version: ${{ inputs.rclone_version }}
 
     - name: Upload to S3
       id: upload
       if: inputs.s3_upload == 'true'
       shell: bash
       env:
+        ACTION_PATH: ${{ github.action_path }}
         OUT_DIR: ${{ github.action_path }}/out
         S3_BUCKET: ${{ inputs.s3_bucket }}
         S3_PATH: ${{ steps.resolve.outputs.s3_path }}
         S3_PUBLIC_URL: ${{ inputs.s3_public_url }}
-        RCLONE_CONFIG: ${{ inputs.rclone_config }}
       run: ${{ github.action_path }}/lib/upload-s3.sh
 
     - name: Upload workflow artifact
