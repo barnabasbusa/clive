@@ -176,8 +176,10 @@ def _build_description(
 
     # ── Link to the test case in the CL client repo ─────────────────────
     if source_repo:
-        # Prefer the resolved SHA (immutable) over the user-provided ref.
-        repo_ref = source_sha or source_ref or "master"
+        # Prefer the human-readable ref (branch/tag) for navigation; fall
+        # back to the resolved SHA when the user dispatched empty (=latest
+        # release) so we still emit a real URL.
+        repo_ref = source_ref or source_sha or "master"
         rel_file = _strip_src_prefix(tc.get("file", ""), cl_client)
         # Vitest et al. report paths relative to the runner CWD (the
         # package dir), not the repo root. The adapter declares its CWD
