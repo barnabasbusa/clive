@@ -147,7 +147,7 @@ runs:
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
-        OUT_DIR: ${{ github.action_path }}/out
+        OUT_DIR: ${{ runner.temp }}/clive-out
         CL_SOURCE_REPO: ${{ steps.resolve.outputs.cl_source_repo }}
         CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
         CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
@@ -161,7 +161,7 @@ runs:
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
-        OUT_DIR: ${{ github.action_path }}/out
+        OUT_DIR: ${{ runner.temp }}/clive-out
         CL_SOURCE_REPO: ${{ steps.resolve.outputs.cl_source_repo }}
         CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
         CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
@@ -175,7 +175,7 @@ runs:
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
-        OUT_DIR: ${{ github.action_path }}/out
+        OUT_DIR: ${{ runner.temp }}/clive-out
         CL_SOURCE_REPO: ${{ steps.resolve.outputs.cl_source_repo }}
         CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
         CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
@@ -187,7 +187,7 @@ runs:
       id: summarize
       shell: bash
       env:
-        OUT_DIR: ${{ github.action_path }}/out
+        OUT_DIR: ${{ runner.temp }}/clive-out
       run: ${{ github.action_path }}/lib/junit-to-hive.py
 
     - name: Setup rclone for S3 upload
@@ -203,7 +203,7 @@ runs:
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
-        OUT_DIR: ${{ github.action_path }}/out
+        OUT_DIR: ${{ runner.temp }}/clive-out
         S3_BUCKET: ${{ inputs.s3_bucket }}
         S3_PATH: ${{ steps.resolve.outputs.s3_path }}
         S3_PUBLIC_URL: ${{ inputs.s3_public_url }}
@@ -214,13 +214,13 @@ runs:
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: clive-${{ inputs.cl_client }}-${{ inputs.cl_source_ref }}-${{ inputs.network }}
-        path: ${{ github.action_path }}/out/
+        path: ${{ runner.temp }}/clive-out/
         if-no-files-found: error
         retention-days: 14
 
     - name: Gate
       shell: bash
       env:
-        OUT_DIR: ${{ github.action_path }}/out
+        OUT_DIR: ${{ runner.temp }}/clive-out
         FAIL_ON: ${{ inputs.fail_on }}
       run: ${{ github.action_path }}/lib/gate.sh
