@@ -47,10 +47,18 @@ echo "client_version=${CLIENT_VERSION}"
 echo "::endgroup::"
 
 echo "::group::Run gradle reference-tests (scope=${SCOPE})"
-# gradle writes JUnit XML to <module>/build/test-results/<task>/TEST-*.xml by
-# default. The task on this fork is singular (`referenceTest`), confirmed by
-# `gradlew tasks` output. For a smoke we narrow to a single category via --tests
-# so we don't pay the cost of the full reference-tests sweep on every smoke.
+# Teku's build.gradle declares an aggregate `expandRefTests` task that depends
+# on per-category download+extract tasks (general / minimal / mainnet / bls /
+# slashing-protection-interchange). The reference test source generator
+# (`generateReferenceTestClasses`) reads from
+# eth-reference-tests/src/referenceTest/resources/consensus-spec-tests/tests/
+# which only exists after that aggregate task has run. We must invoke it
+# explicitly before the test task.
+#
+# Teku's `downloadFile` helper sets an `Authorization: token <T>` header on
+# the GitHub release downloads to dodge anonymous rate limits. The smoke
+# workflow forwards github.token; if missing we still try, github usually
+# tolerates a few unauthenticated tarball pulls.
 GRADLE_TASK=":eth-reference-tests:referenceTest"
 GRADLE_FILTER=()
 case "${SCOPE}" in
@@ -64,8 +72,9 @@ case "${SCOPE}" in
     echo "::error::unknown CLIVE_TEST_SCOPE: ${SCOPE}"; exit 1 ;;
 esac
 
+# `expandRefTests` is the umbrella that pulls fixtures into resources/.
 set +e
-./gradlew --no-daemon --console=plain "${GRADLE_TASK}" "${GRADLE_FILTER[@]}" 2>&1 | tee -a "${LOG_FILE}"
+./gradlew --no-daemon --console=plain expandRefTests "${GRADLE_TASK}" "${GRADLE_FILTER[@]}" 2>&1 | tee -a "${LOG_FILE}"
 RC=$?
 set -e
 echo "gradle exit: ${RC}"

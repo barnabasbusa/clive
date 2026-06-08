@@ -236,6 +236,9 @@ runs:
         CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
         NETWORK: ${{ inputs.network }}
         CLIVE_TEST_SCOPE: ${{ inputs.scope }}
+        # Teku's build.gradle Authorization header for ref-test tarball
+        # downloads reads from these envs to dodge anonymous rate limits.
+        GITHUB_TOKEN: ${{ github.token }}
       run: ${{ github.action_path }}/adapters/teku.sh
 
     - name: Run Prysm spec tests
