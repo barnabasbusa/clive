@@ -7,8 +7,9 @@ name: Smoke
 # row tells you at a glance which client / source ref / scope is being
 # exercised, e.g. "Smoke lodestar@glamsterdam-devnet-5 [bls]".
 run-name: >-
-  Smoke ${{ inputs.cl_client }}@${{ inputs.cl_source_ref || 'latest-release' }}
-  [${{ inputs.scope || 'default' }}]${{ inputs.consensus_spec_tests_ref && format(' fixtures={0}', inputs.consensus_spec_tests_ref) || '' }}
+  ${{ inputs.cl_client }}@${{ inputs.cl_source_ref || 'latest-release' }}
+   - ${{ inputs.consensus_spec_tests_ref || 'pin' }}
+   - ${{ inputs.scope || 'default' }}
 
 on:
   workflow_dispatch:
