@@ -91,10 +91,16 @@ def parse_junit(path: Path) -> list[dict]:
         failure_message = ""
         if failed:
             failure_message = (failure_el.text or "").strip() or (failure_el.get("message", "") or "")
+        # `passed` is whether the case is *not* a failure. Skipped cases are not
+        # failures — they're tests that intentionally didn't execute (typically
+        # because the client doesn't yet support the fork/preset for that
+        # fixture). Treating skips as failures, as hive-ui's `summaryResult.pass`
+        # default does, would surface every skipped fixture as red even when
+        # the listing row already correctly reports 0 fails and N skipped.
         cases.append({
             "name": f"{classname}::{name}" if classname else name,
             "classname": classname,
-            "passed": not (failed or skipped),
+            "passed": not failed,
             "skipped": skipped,
             "failed": failed,
             "time": float(tc.get("time") or 0.0),
