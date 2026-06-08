@@ -48,8 +48,12 @@ CLIENT_VERSION="${NIMBUS_VERSION_RAW%.}-${RESOLVED_SHA:0:8}"
 echo "client_version=${CLIENT_VERSION}"
 echo "::endgroup::"
 
+# Nimbus pulls fixtures via the vendored nim-eth2-scenarios submodule. Its
+# download_test_vectors.sh supports CONSENSUS_TEST_VECTOR_VERSIONS to force a
+# specific tag. We forward CONSENSUS_SPEC_TESTS_REF through that env var.
 if [[ -n "${CONSENSUS_SPEC_TESTS_REF}" ]]; then
-  echo "::warning::Nimbus pins its spec-test fixtures via scripts/setup_scenarios.sh; clive cannot override it yet. Ignoring CONSENSUS_SPEC_TESTS_REF=${CONSENSUS_SPEC_TESTS_REF}"
+  export CONSENSUS_TEST_VECTOR_VERSIONS="${CONSENSUS_SPEC_TESTS_REF}"
+  echo "forwarding fixtures override: CONSENSUS_TEST_VECTOR_VERSIONS=${CONSENSUS_TEST_VECTOR_VERSIONS}"
 fi
 
 echo "::group::Nimbus toolchain bootstrap (make update)"
@@ -108,14 +112,17 @@ case "${SCOPE}" in
     echo "::error::unknown CLIVE_TEST_SCOPE: ${SCOPE}"; exit 1 ;;
 esac
 
-echo "::group::Resolve consensus-spec-tests version that was downloaded"
-# scripts/setup_scenarios.sh pins the version internally; surface what it
-# actually placed on disk so clive-meta records the effective ref.
+echo "::group::Resolve effective consensus-spec-tests version"
+# When we forwarded CONSENSUS_TEST_VECTOR_VERSIONS that's the truth; otherwise
+# parse the nim-eth2-scenarios download_test_vectors.sh `VERSIONS=(...)` array
+# at the submodule's pinned commit.
 EFFECTIVE_REF="${CONSENSUS_SPEC_TESTS_REF:-}"
 if [[ -z "${EFFECTIVE_REF}" ]]; then
-  EFFECTIVE_REF=$(find vendor -maxdepth 6 -type d -name 'tests' 2>/dev/null \
-    | head -1 | xargs -I{} dirname {} 2>/dev/null \
-    | xargs -I{} cat {}/VERSION 2>/dev/null | head -1 || true)
+  DV_SCRIPT="${SRC_DIR}/vendor/nim-eth2-scenarios/download_test_vectors.sh"
+  if [[ -f "${DV_SCRIPT}" ]]; then
+    EFFECTIVE_REF=$(grep -E 'VERSIONS=\(' "${DV_SCRIPT}" | head -1 \
+      | sed -E 's/.*VERSIONS=\("([^"]+)".*/\1/' || true)
+  fi
   [[ -z "${EFFECTIVE_REF}" ]] && EFFECTIVE_REF="unknown"
 fi
 echo "effective consensus-spec-tests ref: ${EFFECTIVE_REF}"
