@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: ethpandaops/clive@main           # ← swap to barnabasbusa/clive@main while still on the fork
+      - uses: ethpandaops/clive@master         # ← swap to barnabasbusa/clive@master while still on the fork
         with:
           cl_client: lodestar
           cl_source_ref: v1.43.0
@@ -103,7 +103,7 @@ client × category × fork matrix.
 │  devnet repo (e.g. ethpandaops/glamsterdam-devnets)                        │
 │  .github/workflows/clive-devnet-5.yaml  ── matrix: cl-client × source-ref  │
 └──────────────────────────────────┬─────────────────────────────────────────┘
-                                   │ uses: ethpandaops/clive@main
+                                   │ uses: ethpandaops/clive@master
                                    ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
 │  ethpandaops/clive (this repo)                                              │
