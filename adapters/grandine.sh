@@ -121,9 +121,17 @@ if [[ -f "${GENERATED}" ]]; then
   destination="${HARVEST_DIR}/grandine-spec.xml"
   cp "${GENERATED}" "${destination}"
   echo "junit -> ${destination}"
-  SUITES_JSON=$(jq -n \
+  # Default smoke target is `fork_choice_control` — declare that category so
+  # the row lands under `spec/<fork>/fork_choice/<preset>` rather than the
+  # `uncategorised` fallback. `full` scope covers the workspace; leaving
+  # category empty there lets junit-to-hive.py auto-split.
+  case "${SCOPE}" in
+    smoke) SMOKE_CATEGORY="fork_choice" ;;
+    *)     SMOKE_CATEGORY="" ;;
+  esac
+  SUITES_JSON=$(jq -n --arg category "${SMOKE_CATEGORY}" \
     '[{junit_file:"grandine-spec.xml", project:"cargo-nextest:clive",
-       preset:"", fork:"", category:"", subcategory:null}]')
+       preset:"", fork:"", category:$category, subcategory:null}]')
 else
   echo "::warning::no JUnit produced at ${GENERATED}"
 fi

@@ -90,10 +90,15 @@ run_preset() {
   if [[ -f "${generated}" ]]; then
     cp "${generated}" "${destination}"
     echo "junit -> ${destination}"
+    # Leave category empty so junit-to-hive.py's auto-split groups testcases
+    # by their per-case category extracted from the test name. The
+    # consensus_spec_tests_<preset> binary covers many categories (sanity,
+    # fork_choice, operations, epoch_processing, transition, ...) — emitting a
+    # single hardcoded `sanity` label hides that breakdown in the dashboard.
     SUITES_JSON=$(jq --arg jf "${suite_basename}" \
                     --arg project "${binary}" \
                     --arg preset "${preset}" \
-      '. + [{junit_file:$jf, project:$project, preset:$preset, fork:"", category:"sanity", subcategory:null}]' \
+      '. + [{junit_file:$jf, project:$project, preset:$preset, fork:"", category:"", subcategory:null}]' \
       <<<"${SUITES_JSON}")
   else
     echo "::warning::no JUnit produced at ${generated}"

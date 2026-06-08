@@ -141,6 +141,104 @@ def main() -> int:
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     timestamp_prefix = int(time.time())
 
+    total_rows = 0
+
+    def emit_row(fork: str, preset: str, category: str, subcategory: str, cases: list[dict]):
+        """Emit one TestRun row + one TestDetail for a group of cases."""
+        nonlocal total_ntests, total_passes, total_fails, total_rows
+        ntests, passes, fails, skipped_count = count_results(cases)
+        total_ntests += ntests
+        total_passes += passes
+        total_fails += fails
+        total_rows += 1
+        slug = f"{cl_client}-{category}-{preset}-{fork}-{subcategory}".strip("-")
+        digest = hashlib.sha1(slug.encode()).hexdigest()[:12]
+        file_name = f"{timestamp_prefix}-{digest}.json"
+
+        test_cases = {}
+        for i, tc in enumerate(cases, start=1):
+            case_fork = fork or _scan(f"{tc['classname']}.{tc['name']}", FORKS)
+            case_preset = preset or _scan(f"{tc['classname']}.{tc['name']}", PRESETS)
+            case_category = category or _scan(f"{tc['classname']}.{tc['name']}", CATEGORIES)
+            test_cases[str(i)] = {
+                "name": tc["name"],
+                "description": "",
+                "start": now_iso,
+                "end": now_iso,
+                "summaryResult": {
+                    "pass": tc["passed"],
+                    "skipped": tc["skipped"],
+                    "log": {"begin": 0, "end": 0},
+                },
+                "clientInfo": {
+                    client_label: {
+                        "id": client_label,
+                        "ip": "",
+                        "name": client_label,
+                        "instantiatedAt": now_iso,
+                        "logFile": "",
+                    },
+                },
+                "failureMessage": tc["failure_message"] if tc["failed"] else "",
+                "skipped": tc["skipped"],
+                "durationSeconds": tc["time"],
+                "fork": case_fork,
+                "preset": case_preset,
+                "category": case_category,
+            }
+
+        detail = {
+            "id": 0,
+            "name": _suite_label(fork, category, preset, subcategory),
+            "description": (
+                f"Consensus spec tests for {category or '?'}"
+                f"{' / ' + subcategory if subcategory else ''}"
+                f" ({preset or '–'}, {fork or '–'})"
+                f" on {cl_client} {client_version}, fixtures {cst_ref}."
+            ),
+            "clientVersions": {client_label: client_version},
+            "testCases": test_cases,
+            "simLog": f"{cl_client}.log",
+            "testDetailsLog": "",
+            "runMetadata": {
+                "clive": {
+                    "client": cl_client,
+                    "source_ref": source_ref,
+                    "source_sha": meta.get("source_sha", ""),
+                    "client_version": client_version,
+                    "consensus_spec_tests_ref": cst_ref,
+                    "network": network,
+                    "category": category,
+                    "subcategory": subcategory,
+                    "preset": preset,
+                    "fork": fork,
+                },
+            },
+        }
+        (results_dir / file_name).write_text(json.dumps(detail))
+
+        row = {
+            "name": _suite_label(fork, category, preset, subcategory),
+            "ntests": ntests,
+            "passes": passes,
+            "fails": fails,
+            "timeout": False,
+            "clients": [client_label],
+            "versions": {client_label: client_version},
+            "start": now_iso,
+            "fileName": file_name,
+            "size": (results_dir / file_name).stat().st_size,
+            "simLog": f"{cl_client}.log",
+            "category": category,
+            "subcategory": subcategory,
+            "preset": preset,
+            "fork": fork,
+            "skipped": skipped_count,
+            "consensus_spec_tests_ref": cst_ref,
+            "network": network,
+        }
+        listing_fp.write(json.dumps(row) + "\n")
+
     with listing_path.open("w") as listing_fp:
         for suite in suites:
             junit_file = suite["junit_file"]
@@ -150,106 +248,35 @@ def main() -> int:
                 continue
 
             cases = parse_junit(xml_path)
-            ntests, passes, fails, skipped = count_results(cases)
-            total_ntests += ntests
-            total_passes += passes
-            total_fails += fails
+            if not cases:
+                continue
 
             suite_preset = suite.get("preset", "")
             suite_fork = suite.get("fork", "")
             suite_category = suite.get("category", "")
             suite_subcategory = suite.get("subcategory") or ""
 
-            # Build a stable file name for the TestDetail.
-            slug = f"{cl_client}-{suite_category}-{suite_preset}-{suite_fork}-{suite_subcategory}".strip("-")
-            digest = hashlib.sha1(slug.encode()).hexdigest()[:12]
-            file_name = f"{timestamp_prefix}-{digest}.json"
-
-            test_cases = {}
-            for i, tc in enumerate(cases, start=1):
-                # Inherit suite-level classification; allow per-case override via heuristic.
-                case_fork = suite_fork or _scan(f"{tc['classname']}.{tc['name']}", FORKS)
-                case_preset = suite_preset or _scan(f"{tc['classname']}.{tc['name']}", PRESETS)
-                case_category = suite_category or _scan(f"{tc['classname']}.{tc['name']}", CATEGORIES)
-                test_cases[str(i)] = {
-                    "name": tc["name"],
-                    "description": "",
-                    "start": now_iso,
-                    "end": now_iso,
-                    "summaryResult": {
-                        "pass": tc["passed"],
-                        "log": {"begin": 0, "end": 0},
-                    },
-                    "clientInfo": {
-                        client_label: {
-                            "id": client_label,
-                            "ip": "",
-                            "name": client_label,
-                            "instantiatedAt": now_iso,
-                            "logFile": "",
-                        },
-                    },
-                    "failureMessage": tc["failure_message"] if tc["failed"] else "",
-                    "skipped": tc["skipped"],
-                    "durationSeconds": tc["time"],
-                    "fork": case_fork,
-                    "preset": case_preset,
-                    "category": case_category,
-                }
-
-            detail = {
-                "id": 0,
-                "name": _suite_label(suite_fork, suite_category, suite_preset, suite_subcategory),
-                "description": (
-                    f"Consensus spec tests for {suite_category}"
-                    f"{' / ' + suite_subcategory if suite_subcategory else ''}"
-                    f" ({suite_preset or '–'}, {suite_fork or '–'})"
-                    f" on {cl_client} {client_version}, fixtures {cst_ref}."
-                ),
-                "clientVersions": {client_label: client_version},
-                "testCases": test_cases,
-                "simLog": f"{cl_client}.log",
-                "testDetailsLog": "",
-                "runMetadata": {
-                    "clive": {
-                        "client": cl_client,
-                        "source_ref": source_ref,
-                        "source_sha": meta.get("source_sha", ""),
-                        "client_version": client_version,
-                        "consensus_spec_tests_ref": cst_ref,
-                        "network": network,
-                        "category": suite_category,
-                        "subcategory": suite_subcategory,
-                        "preset": suite_preset,
-                        "fork": suite_fork,
-                        "project": suite.get("project", ""),
-                    },
-                },
-            }
-
-            (results_dir / file_name).write_text(json.dumps(detail))
-
-            row = {
-                "name": _suite_label(suite_fork, suite_category, suite_preset, suite_subcategory),
-                "ntests": ntests,
-                "passes": passes,
-                "fails": fails,
-                "timeout": False,
-                "clients": [client_label],
-                "versions": {client_label: client_version},
-                "start": now_iso,
-                "fileName": file_name,
-                "size": (results_dir / file_name).stat().st_size,
-                "simLog": f"{cl_client}.log",
-                "category": suite_category,
-                "subcategory": suite_subcategory,
-                "preset": suite_preset,
-                "fork": suite_fork,
-                "skipped": skipped,
-                "consensus_spec_tests_ref": cst_ref,
-                "network": network,
-            }
-            listing_fp.write(json.dumps(row) + "\n")
+            # Auto-split mode: when the adapter doesn't declare a category at
+            # the suite level (Nimbus's consensus_spec_tests_minimal binary,
+            # Prysm's //testing/spectest/general/..., etc.), partition the
+            # testcases by their per-case (category, preset, fork) inferred
+            # from the test path and emit one row per group. This turns a
+            # single 7227-case Nimbus run into ~10 rows like
+            # `spec/capella/fork_choice/minimal`, `spec/altair/sanity/minimal`
+            # rather than one opaque `spec/*/sanity/minimal` row.
+            if not suite_category:
+                groups: dict[tuple[str, str, str], list[dict]] = {}
+                for tc in cases:
+                    haystack = f"{tc['classname']}.{tc['name']}"
+                    case_category = _scan(haystack, CATEGORIES) or ""
+                    case_preset = suite_preset or _scan(haystack, PRESETS) or ""
+                    case_fork = suite_fork or _scan(haystack, FORKS) or ""
+                    key = (case_fork, case_preset, case_category)
+                    groups.setdefault(key, []).append(tc)
+                for (fork, preset, category), group_cases in sorted(groups.items()):
+                    emit_row(fork, preset, category, suite_subcategory, group_cases)
+            else:
+                emit_row(suite_fork, suite_preset, suite_category, suite_subcategory, cases)
 
     gh_output = os.environ.get("GITHUB_OUTPUT")
     if gh_output:
@@ -258,14 +285,14 @@ def main() -> int:
             fp.write(f"passes={total_passes}\n")
             fp.write(f"fails={total_fails}\n")
 
-    print(f"clive: wrote {len(suites)} TestRun row(s) "
+    print(f"clive: wrote {total_rows} TestRun row(s) from {len(suites)} suite(s) "
           f"({total_passes}/{total_ntests} passing, {total_fails} fail) "
           f"to {listing_path}")
     return 0
 
 
 def _suite_label(fork: str, category: str, preset: str, subcategory: str) -> str:
-    parts = ["spec", fork or "*", category or "?"]
+    parts = ["spec", fork or "any", category or "uncategorised"]
     if subcategory:
         parts.append(subcategory)
     if preset:
