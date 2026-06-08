@@ -254,7 +254,11 @@ def main() -> int:
     source_ref = meta["source_ref"]
     source_repo = meta.get("source_repo", "")
     source_sha = meta.get("source_sha", "")
-    client_label = f"{cl_client}_{source_ref}"
+    # The hive-ui filter and card titles render `clients[]` verbatim; using
+    # just the client name keeps the dropdown labels short ("prysm") instead
+    # of "prysm_glamsterdam-devnet-5". The ref/network info is preserved on
+    # the TestRun row itself (`versions`, `network`, `source_ref`).
+    client_label = cl_client
     client_version = meta["client_version"]
     cst_ref = meta["consensus_spec_tests_ref"]
     network = meta["network"]
