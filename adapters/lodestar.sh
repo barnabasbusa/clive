@@ -110,12 +110,17 @@ vitest_run() {
   echo "vitest [${label}] exit: ${rc}; junit: ${junit_path}"
   echo "::endgroup::"
   if [[ -f "${junit_path}" ]]; then
+    # vitest reports `classname=<path>` and `<testcase file=...>` relative
+    # to its own CWD, which here is the beacon-node package — not the repo
+    # root. Declare the subdir so junit-to-hive.py can rebuild repo-relative
+    # paths when constructing the GitHub blob URL.
     SUITES_JSON=$(jq --arg jf "${junit_basename}" \
                     --arg project "${project}" \
                     --arg preset "${preset}" \
                     --arg fork "${fork}" \
                     --arg category "${category}" \
-      '. + [{junit_file:$jf, project:$project, preset:$preset, fork:$fork, category:$category, subcategory:null}]' \
+                    --arg source_subdir "packages/beacon-node" \
+      '. + [{junit_file:$jf, project:$project, preset:$preset, fork:$fork, category:$category, subcategory:null, source_subdir:$source_subdir}]' \
       <<<"${SUITES_JSON}")
   else
     echo "::warning::no JUnit file produced for ${label}; suite omitted from clive-meta"

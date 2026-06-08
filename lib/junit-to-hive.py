@@ -100,14 +100,20 @@ def parse_junit(path: Path) -> list[dict]:
         # fixture). Treating skips as failures, as hive-ui's `summaryResult.pass`
         # default does, would surface every skipped fixture as red even when
         # the listing row already correctly reports 0 fails and N skipped.
+        # Locate the file path that holds this test, in priority order:
+        #   1. explicit `<testcase file="...">` attribute (rare)
+        #   2. `classname` when it looks like a source-file path — vitest
+        #      writes `classname="test/spec/bls/index.test.ts"`, which is
+        #      exactly the repo-relative path we need.
+        # Other runners (nextest, gradle, bazel, nim) leave both blank and
+        # the description-builder falls back to a GitHub code-search URL.
+        file_attr = tc.get("file", "")
+        if not file_attr and _looks_like_source_path(classname):
+            file_attr = classname
         cases.append({
             "name": f"{classname}::{name}" if classname else name,
             "classname": classname,
-            # vitest emits `file=` as an absolute runner path; nextest /
-            # bazel / nim / gradle typically don't emit it at all. Leave
-            # empty when missing — the description-builder falls back to
-            # a GitHub search URL in that case.
-            "file": tc.get("file", ""),
+            "file": file_attr,
             "line": tc.get("line", ""),
             "passed": not failed,
             "skipped": skipped,
@@ -116,6 +122,16 @@ def parse_junit(path: Path) -> list[dict]:
             "failure_message": failure_message,
         })
     return cases
+
+
+_SOURCE_PATH_RE = re.compile(
+    r"^[A-Za-z0-9_./-]+\.(?:tsx?|jsx?|mjs|cjs|rs|go|py|nim|java|kt|scala|sol|cs)$"
+)
+
+
+def _looks_like_source_path(s: str) -> bool:
+    """Heuristic: does this look like a repo-relative source file path?"""
+    return bool(s) and "/" in s and bool(_SOURCE_PATH_RE.match(s))
 
 
 def _strip_src_prefix(file_path: str, cl_client: str) -> str:
@@ -141,6 +157,7 @@ def _build_description(
     source_repo: str,
     source_sha: str,
     source_ref: str,
+    source_subdir: str,
     cst_ref: str,
     preset: str,
     fork: str,
@@ -162,6 +179,11 @@ def _build_description(
         # Prefer the resolved SHA (immutable) over the user-provided ref.
         repo_ref = source_sha or source_ref or "master"
         rel_file = _strip_src_prefix(tc.get("file", ""), cl_client)
+        # Vitest et al. report paths relative to the runner CWD (the
+        # package dir), not the repo root. The adapter declares its CWD
+        # via the suite's `source_subdir` so we can rebuild repo paths.
+        if rel_file and source_subdir:
+            rel_file = f"{source_subdir.strip('/')}/{rel_file}"
         if rel_file:
             line_suffix = f"#L{tc['line']}" if tc.get("line") else ""
             label = html.escape(f"{rel_file}{(':' + tc['line']) if tc.get('line') else ''}")
@@ -245,7 +267,7 @@ def main() -> int:
 
     total_rows = 0
 
-    def emit_row(fork: str, preset: str, category: str, subcategory: str, cases: list[dict]):
+    def emit_row(fork: str, preset: str, category: str, subcategory: str, cases: list[dict], source_subdir: str = ""):
         """Emit one TestRun row + one TestDetail for a group of cases."""
         nonlocal total_ntests, total_passes, total_fails, total_rows
         ntests, passes, fails, skipped_count = count_results(cases)
@@ -270,6 +292,7 @@ def main() -> int:
                     source_repo=source_repo,
                     source_sha=source_sha,
                     source_ref=source_ref,
+                    source_subdir=source_subdir,
                     cst_ref=cst_ref,
                     preset=case_preset,
                     fork=case_fork,
@@ -406,11 +429,15 @@ def main() -> int:
                     # If multiple categories merge into the bucket, the row's
                     # per-case fields carry the truth; the suite-level
                     # `category` is informational only.
+                suite_source_subdir = suite.get("source_subdir") or ""
                 for (top, fork), bucket in sorted(merged.items()):
                     emit_row(fork, bucket["preset"], bucket["category"],
-                             suite_subcategory, bucket["cases"])
+                             suite_subcategory, bucket["cases"],
+                             source_subdir=suite_source_subdir)
             else:
-                emit_row(suite_fork, suite_preset, suite_category, suite_subcategory, cases)
+                emit_row(suite_fork, suite_preset, suite_category,
+                         suite_subcategory, cases,
+                         source_subdir=suite.get("source_subdir") or "")
 
     gh_output = os.environ.get("GITHUB_OUTPUT")
     if gh_output:

@@ -65,6 +65,10 @@
           "subcategory": {
             "type": ["string", "null"],
             "description": "Optional finer-grained label (e.g. blocks under sanity)."
+          },
+          "source_subdir": {
+            "type": ["string", "null"],
+            "description": "Subdirectory inside the cloned client repo where the test runner's CWD was set. Used to rebuild repo-relative `file=` paths for GitHub blob URLs (e.g. `packages/beacon-node` for Lodestar's vitest runs from the beacon-node package). Empty/null means file paths are already repo-relative."
           }
         }
       }
