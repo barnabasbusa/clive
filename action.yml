@@ -61,6 +61,15 @@ inputs:
     description: 'If true, also upload the `out/` directory as a workflow artifact.'
     required: false
     default: 'true'
+  scope:
+    description: >-
+      Test scope. Per-adapter meaning:
+        lodestar:   bls | general | minimal | mainnet | full (default: full)
+        lighthouse: smoke | full (default: full)
+        nimbus:     minimal | mainnet | full (default: minimal)
+      Empty = each adapter picks its default.
+    required: false
+    default: ''
 
 outputs:
   ntests:
@@ -143,6 +152,7 @@ runs:
         CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
         CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
         NETWORK: ${{ inputs.network }}
+        CLIVE_TEST_SCOPE: ${{ inputs.scope }}
       run: ${{ github.action_path }}/adapters/lodestar.sh
 
     - name: Run Lighthouse spec tests
@@ -156,6 +166,7 @@ runs:
         CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
         CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
         NETWORK: ${{ inputs.network }}
+        CLIVE_TEST_SCOPE: ${{ inputs.scope }}
       run: ${{ github.action_path }}/adapters/lighthouse.sh
 
     - name: Run Nimbus spec tests
@@ -169,6 +180,7 @@ runs:
         CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
         CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
         NETWORK: ${{ inputs.network }}
+        CLIVE_TEST_SCOPE: ${{ inputs.scope }}
       run: ${{ github.action_path }}/adapters/nimbus.sh
 
     - name: Normalise results into hive-ui schema

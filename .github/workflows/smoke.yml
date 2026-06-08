@@ -1,0 +1,52 @@
+name: Smoke
+# Manual-only workflow for testing clive itself against a real CL client.
+# Uses the local action.yml (./) so changes on this branch are exercised
+# without needing to publish a tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      cl_client:
+        description: 'CL client'
+        type: choice
+        required: true
+        default: lodestar
+        options:
+          - lodestar
+          - lighthouse
+          - nimbus
+      cl_source_ref:
+        description: 'Branch/tag/SHA on the client repo (empty = latest release)'
+        type: string
+        required: false
+        default: 'glamsterdam-devnet-5'
+      scope:
+        description: 'Test scope (adapter-specific; empty = adapter default)'
+        type: string
+        required: false
+        default: ''
+      consensus_spec_tests_ref:
+        description: 'consensus-spec-tests release (empty = client pin)'
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout clive
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run clive against ${{ inputs.cl_client }}@${{ inputs.cl_source_ref }}
+        uses: ./
+        with:
+          cl_client:                ${{ inputs.cl_client }}
+          cl_source_ref:            ${{ inputs.cl_source_ref }}
+          scope:                    ${{ inputs.scope }}
+          consensus_spec_tests_ref: ${{ inputs.consensus_spec_tests_ref }}
+          network:                  smoke-${{ inputs.cl_client }}
+          fail_on:                  ''   # don't block the smoke on any category; we want to see what comes through
+          s3_upload:                'false'
+          workflow_artifact_upload: 'true'
