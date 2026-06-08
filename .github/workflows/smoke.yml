@@ -15,6 +15,9 @@ on:
           - lodestar
           - lighthouse
           - nimbus
+          - teku
+          - prysm
+          - grandine
       cl_source_ref:
         description: 'Branch/tag/SHA on the client repo (empty = latest release)'
         type: string

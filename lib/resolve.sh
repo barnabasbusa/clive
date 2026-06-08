@@ -17,15 +17,12 @@ set -euo pipefail
 #   s3_path
 
 case "${CL_CLIENT}" in
-  lodestar)
-    DEFAULT_REPO="ChainSafe/lodestar"
-    ;;
-  lighthouse)
-    DEFAULT_REPO="sigp/lighthouse"
-    ;;
-  nimbus)
-    DEFAULT_REPO="status-im/nimbus-eth2"
-    ;;
+  lodestar)   DEFAULT_REPO="ChainSafe/lodestar" ;;
+  lighthouse) DEFAULT_REPO="sigp/lighthouse" ;;
+  nimbus)     DEFAULT_REPO="status-im/nimbus-eth2" ;;
+  teku)       DEFAULT_REPO="Consensys/teku" ;;
+  prysm)      DEFAULT_REPO="prysmaticlabs/prysm" ;;
+  grandine)   DEFAULT_REPO="grandinetech/grandine" ;;
   *)
     echo "::error::unsupported cl_client: ${CL_CLIENT}"
     exit 1

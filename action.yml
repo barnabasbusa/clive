@@ -94,9 +94,9 @@ runs:
         CL_CLIENT: ${{ inputs.cl_client }}
       run: |
         case "$CL_CLIENT" in
-          lodestar|lighthouse|nimbus) ;;
+          lodestar|lighthouse|nimbus|teku|prysm|grandine) ;;
           *)
-            echo "::error::clive does not yet support cl_client=${CL_CLIENT}; supported: lodestar, lighthouse, nimbus"
+            echo "::error::clive does not yet support cl_client=${CL_CLIENT}; supported: lodestar, lighthouse, nimbus, teku, prysm, grandine"
             exit 1
             ;;
         esac
@@ -140,6 +140,47 @@ runs:
         sudo apt-get install -y --no-install-recommends \
           build-essential git wget pkg-config libssl-dev libpcre3-dev libgmp-dev
 
+    - name: Set up JDK (Teku)
+      if: inputs.cl_client == 'teku'
+      uses: actions/setup-java@8df1039502a15bceb9433410b1a100fbe190c53b # v4.5.0
+      with:
+        distribution: temurin
+        java-version: '21'
+
+    - name: Set up Go (Prysm)
+      if: inputs.cl_client == 'prysm'
+      uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
+      with:
+        go-version: '1.22'
+
+    - name: Set up Bazelisk (Prysm)
+      if: inputs.cl_client == 'prysm'
+      uses: bazel-contrib/setup-bazel@e403ad507104847c3539436f64a9e9eecc73eeec # 0.8.5
+      with:
+        bazelisk-cache: true
+        disk-cache: ${{ github.workflow }}
+        repository-cache: true
+
+    - name: Set up Rust (Grandine)
+      if: inputs.cl_client == 'grandine'
+      uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+      with:
+        toolchain: stable
+
+    - name: Install cargo-nextest (Grandine)
+      if: inputs.cl_client == 'grandine'
+      uses: taiki-e/install-action@9ca1734d8940023f074414ee621fd530c4ce10f2 # v2.62.46
+      with:
+        tool: cargo-nextest
+
+    - name: Install Grandine system deps
+      if: inputs.cl_client == 'grandine' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          ca-certificates libssl-dev clang cmake protobuf-compiler pkg-config
+
     # --- Per-client adapter dispatch ----------------------------------------
     - name: Run Lodestar spec tests
       id: run_lodestar
@@ -182,6 +223,48 @@ runs:
         NETWORK: ${{ inputs.network }}
         CLIVE_TEST_SCOPE: ${{ inputs.scope }}
       run: ${{ github.action_path }}/adapters/nimbus.sh
+
+    - name: Run Teku spec tests
+      id: run_teku
+      if: inputs.cl_client == 'teku'
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        OUT_DIR: ${{ runner.temp }}/clive-out
+        CL_SOURCE_REPO: ${{ steps.resolve.outputs.cl_source_repo }}
+        CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
+        CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
+        NETWORK: ${{ inputs.network }}
+        CLIVE_TEST_SCOPE: ${{ inputs.scope }}
+      run: ${{ github.action_path }}/adapters/teku.sh
+
+    - name: Run Prysm spec tests
+      id: run_prysm
+      if: inputs.cl_client == 'prysm'
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        OUT_DIR: ${{ runner.temp }}/clive-out
+        CL_SOURCE_REPO: ${{ steps.resolve.outputs.cl_source_repo }}
+        CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
+        CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
+        NETWORK: ${{ inputs.network }}
+        CLIVE_TEST_SCOPE: ${{ inputs.scope }}
+      run: ${{ github.action_path }}/adapters/prysm.sh
+
+    - name: Run Grandine spec tests
+      id: run_grandine
+      if: inputs.cl_client == 'grandine'
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        OUT_DIR: ${{ runner.temp }}/clive-out
+        CL_SOURCE_REPO: ${{ steps.resolve.outputs.cl_source_repo }}
+        CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
+        CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
+        NETWORK: ${{ inputs.network }}
+        CLIVE_TEST_SCOPE: ${{ inputs.scope }}
+      run: ${{ github.action_path }}/adapters/grandine.sh
 
     - name: Normalise results into hive-ui schema
       id: summarize
