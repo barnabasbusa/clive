@@ -21,7 +21,7 @@ case "${CL_CLIENT}" in
   lighthouse) DEFAULT_REPO="sigp/lighthouse" ;;
   nimbus)     DEFAULT_REPO="status-im/nimbus-eth2" ;;
   teku)       DEFAULT_REPO="Consensys/teku" ;;
-  prysm)      DEFAULT_REPO="prysmaticlabs/prysm" ;;
+  prysm)      DEFAULT_REPO="OffchainLabs/prysm" ;;
   grandine)   DEFAULT_REPO="grandinetech/grandine" ;;
   *)
     echo "::error::unsupported cl_client: ${CL_CLIENT}"

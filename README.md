@@ -19,7 +19,7 @@ S3 bucket, same CloudFront host, different data path.
 | lighthouse | `sigp/lighthouse`            | Rust + nextest   | `cargo nextest run --profile clive -p ef_tests`|
 | nimbus     | `status-im/nimbus-eth2`      | nim (bootstrapped) | `consensus_spec_tests_<preset> --xml:...`    |
 | teku       | `Consensys/teku`             | JDK 25 + Gradle  | `:eth-reference-tests:referenceTest`           |
-| prysm      | `prysmaticlabs/prysm`        | Go + Bazel       | `bazel test //testing/spectest/...`            |
+| prysm      | `OffchainLabs/prysm`         | Go + Bazel       | `bazel test //testing/spectest/...`            |
 | grandine   | `grandinetech/grandine`      | Rust + nextest   | `cargo nextest run` filtered by package        |
 
 ## Usage

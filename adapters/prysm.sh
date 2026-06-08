@@ -8,7 +8,9 @@ set -euo pipefail
 # Inputs (env):
 #   ACTION_PATH               - clive action root
 #   OUT_DIR                   - where to deposit JUnit XML + raw stdout
-#   CL_SOURCE_REPO            - e.g. prysmaticlabs/prysm
+#   CL_SOURCE_REPO            - e.g. OffchainLabs/prysm (prysmaticlabs/prysm
+#                               still resolves via GitHub's transparent rename
+#                               redirect, so old refs keep working)
 #   CL_SOURCE_REF             - tag/branch/commit
 #   CONSENSUS_SPEC_TESTS_REF  - currently informational (Prysm pulls fixtures
 #                               via Bazel rules that pin the version internally)
