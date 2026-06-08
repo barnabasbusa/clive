@@ -17,8 +17,9 @@ inputs:
     required: false
     default: ''
   cl_source_ref:
-    description: 'Tag, branch or commit to check out and build.'
-    required: true
+    description: 'Tag, branch, or commit SHA to check out and build. Empty = latest release of `cl_source_repo`.'
+    required: false
+    default: ''
   consensus_spec_tests_ref:
     description: 'Tag of ethereum/consensus-spec-tests to use as fixtures (e.g. v1.7.0-alpha.10). Empty = use the version pinned in the client repo.'
     required: false
@@ -97,14 +98,18 @@ runs:
       env:
         CL_CLIENT: ${{ inputs.cl_client }}
         CL_SOURCE_REPO: ${{ inputs.cl_source_repo }}
+        CL_SOURCE_REF: ${{ inputs.cl_source_ref }}
         NETWORK: ${{ inputs.network }}
         S3_PATH: ${{ inputs.s3_path }}
+        GH_TOKEN: ${{ github.token }}
       run: ${{ github.action_path }}/lib/resolve.sh
 
     - name: Set up Node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
-        node-version: '22'
+        # Lodestar's package.json#engines pins ^24.13.0; bumping per-adapter
+        # if a future client needs a different LTS.
+        node-version: '24'
 
     - name: Run Lodestar spec tests
       id: run
@@ -113,7 +118,7 @@ runs:
         ACTION_PATH: ${{ github.action_path }}
         OUT_DIR: ${{ github.action_path }}/out
         CL_SOURCE_REPO: ${{ steps.resolve.outputs.cl_source_repo }}
-        CL_SOURCE_REF: ${{ inputs.cl_source_ref }}
+        CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
         CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
         NETWORK: ${{ inputs.network }}
       run: ${{ github.action_path }}/adapters/lodestar.sh
@@ -124,7 +129,7 @@ runs:
       env:
         OUT_DIR: ${{ github.action_path }}/out
         CL_CLIENT: ${{ inputs.cl_client }}
-        CL_SOURCE_REF: ${{ inputs.cl_source_ref }}
+        CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
         CONSENSUS_SPEC_TESTS_REF: ${{ steps.run.outputs.consensus_spec_tests_ref }}
         NETWORK: ${{ inputs.network }}
         CLIENT_VERSION: ${{ steps.run.outputs.client_version }}

@@ -54,8 +54,8 @@ A complete reference workflow lives in
 | --- | --- | --- | --- |
 | `cl_client` | `lodestar` | yes | Client to test. v0 accepts only `lodestar`. |
 | `cl_source_repo` | _(per-client default)_ | no | Override the source repo (e.g. fork or hard-pinned org). |
-| `cl_source_ref` | — | yes | Tag, branch or commit to clone and build. |
-| `consensus_spec_tests_ref` | _(client's pin)_ | no | `ethereum/consensus-spec-tests` release tag. Empty = use the version pinned in the client source. v0 errors if this disagrees with the pin. |
+| `cl_source_ref` | _(empty → latest release)_ | no | Tag, branch, or commit SHA to clone and build. Empty resolves to the latest non-prerelease GitHub release of `cl_source_repo`. |
+| `consensus_spec_tests_ref` | _(client's pin)_ | no | `ethereum/consensus-spec-tests` release tag. Empty = use the version pinned in the client source. Setting a different value patches the client's pin in-place before download (Lodestar). |
 | `network` | — | yes | Devnet/network label used in result naming and S3 path. |
 | `fail_on` | `sanity,operations,epoch_processing,transition,random,finality` | no | Categories that hard-fail the job when at least one of their tests fails. |
 | `s3_upload` | `false` | no | Push `results/`, `listing.jsonl` and the run log to S3 via rclone. |
@@ -125,14 +125,29 @@ client × category × fork matrix.
                           ethpandaops/hive-ui  (/cl view)
 ```
 
+## Ref resolution
+
+`cl_source_ref` accepts:
+
+- An explicit **tag** (e.g. `v1.43.0`).
+- An explicit **branch** (e.g. `unstable`).
+- An explicit **commit SHA** (any length git accepts).
+- **Empty** → resolves to the latest non-prerelease GitHub release of
+  `cl_source_repo` via the GH API. The action's `gh` invocation uses
+  `${{ github.token }}`, so no extra secret is required.
+
+`consensus_spec_tests_ref` accepts the same forms (any tag of
+`ethereum/consensus-spec-tests`). Empty falls back to whatever the client
+source tree pins. Setting it to anything else overrides the pin in-place
+before download.
+
 ## Roadmap
 
-- v0 (this): Lodestar only, JUnit → hive schema, S3 upload, gate.
-- v0.1: Override Lodestar's pinned `consensus_spec_tests_ref` from the
-  workflow.
-- v0.2: Lighthouse adapter (cargo + `Swatinem/rust-cache`).
-- v0.3: Teku, Prysm, Nimbus, Grandine adapters.
-- v0.4: Aggregated index workflow, hive-ui `/cl` matrix summary view.
+- v0 (this): Lodestar only, JUnit → hive schema, S3 upload, gate, ref
+  resolution (commits/tags/latest-release), spec-tests override.
+- v0.1: Lighthouse adapter (cargo + `Swatinem/rust-cache`).
+- v0.2: Teku, Prysm, Nimbus, Grandine adapters.
+- v0.3: Aggregated index workflow, hive-ui `/cl` matrix summary view.
 
 ## License
 
