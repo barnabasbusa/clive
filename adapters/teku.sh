@@ -46,6 +46,23 @@ CLIENT_VERSION="${TEKU_VERSION}-${RESOLVED_SHA:0:8}"
 echo "client_version=${CLIENT_VERSION}"
 echo "::endgroup::"
 
+echo "::group::Read & override pinned refTestVersion"
+PINNED_REF=$(grep -E '^def refTestVersion ' build.gradle 2>/dev/null \
+  | sed -E 's/.*"([^"]+)".*/\1/' | tail -1)
+echo "pinned refTestVersion: ${PINNED_REF}"
+if [[ -n "${CONSENSUS_SPEC_TESTS_REF}" && "${CONSENSUS_SPEC_TESTS_REF}" != "${PINNED_REF}" ]]; then
+  echo "::warning::overriding teku's refTestVersion: ${PINNED_REF} -> ${CONSENSUS_SPEC_TESTS_REF}"
+  # build.gradle has: def refTestVersion = nightly ? "nightly" : "v1.7.0-alpha.10"
+  # Replace just the non-nightly literal.
+  sed -i.bak -E \
+    "s|(def refTestVersion = nightly \\? \"nightly\" : \")[^\"]+(\")|\\1${CONSENSUS_SPEC_TESTS_REF}\\2|" \
+    build.gradle
+  diff build.gradle build.gradle.bak | head -10 || true
+fi
+EFFECTIVE_REF="${CONSENSUS_SPEC_TESTS_REF:-$PINNED_REF}"
+echo "effective refTestVersion: ${EFFECTIVE_REF}"
+echo "::endgroup::"
+
 echo "::group::Run gradle reference-tests (scope=${SCOPE})"
 # Teku's build.gradle declares an aggregate `expandRefTests` task that depends
 # on per-category download+extract tasks (general / minimal / mainnet / bls /
@@ -126,8 +143,6 @@ for f in "${HARVEST_DIR}"/*.xml; do
 done
 shopt -u globstar nullglob
 echo "::endgroup::"
-
-EFFECTIVE_REF="${CONSENSUS_SPEC_TESTS_REF:-unknown}"
 
 echo "::group::Write clive-meta.json"
 jq -n \

@@ -76,7 +76,16 @@ TOML
 echo "::endgroup::"
 
 echo "::group::Download consensus-spec-tests fixtures"
-bash scripts/download_spec_tests.sh 2>&1 | tee -a "${LOG_FILE}"
+# Grandine's helper reads `SPEC_VERSION` from the env (default = its own pin).
+# Forward CONSENSUS_SPEC_TESTS_REF when set so we can force a uniform version
+# across the matrix.
+EFFECTIVE_REF="${CONSENSUS_SPEC_TESTS_REF:-}"
+if [[ -n "${EFFECTIVE_REF}" ]]; then
+  echo "overriding grandine's pinned spec-tests version -> ${EFFECTIVE_REF}"
+  SPEC_VERSION="${EFFECTIVE_REF}" bash scripts/download_spec_tests.sh 2>&1 | tee -a "${LOG_FILE}"
+else
+  bash scripts/download_spec_tests.sh 2>&1 | tee -a "${LOG_FILE}"
+fi
 echo "::endgroup::"
 
 # Two run modes:
@@ -120,7 +129,11 @@ else
 fi
 echo "::endgroup::"
 
-EFFECTIVE_REF="${CONSENSUS_SPEC_TESTS_REF:-unknown}"
+# Resolve the effective ref the fixtures landed at — when the caller supplied
+# one we used it; otherwise read what download_spec_tests.sh stamped on disk.
+if [[ -z "${EFFECTIVE_REF}" ]]; then
+  EFFECTIVE_REF=$(cat consensus-spec-tests/.version 2>/dev/null || echo "unknown")
+fi
 
 echo "::group::Write clive-meta.json"
 jq -n \
