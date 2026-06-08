@@ -376,6 +376,8 @@ def main() -> int:
             "fork": fork,
             "skipped": skipped_count,
             "consensus_spec_tests_ref": cst_ref,
+            "source_ref": source_ref,
+            "source_sha": source_sha,
             "network": network,
         }
         listing_fp.write(json.dumps(row) + "\n")
