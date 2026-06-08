@@ -114,7 +114,8 @@ run_nextest() {
                     --arg fork "${fork}" \
                     --arg category "${category}" \
                     --arg subcategory "${subcategory}" \
-      '. + [{junit_file:$jf, project:$project, preset:$preset, fork:$fork, category:$category, subcategory:($subcategory|select(.!="")) }]' \
+      '. + [{junit_file:$jf, project:$project, preset:$preset, fork:$fork, category:$category,
+             subcategory:(if $subcategory == "" then null else $subcategory end)}]' \
       <<<"${SUITES_JSON}")
   else
     echo "::warning::nextest [${label}] produced no JUnit at ${generated}"
