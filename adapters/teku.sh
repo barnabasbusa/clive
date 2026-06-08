@@ -80,7 +80,11 @@ GRADLE_TASK=":eth-reference-tests:referenceTest"
 GRADLE_FILTER=()
 case "${SCOPE}" in
   smoke)
-    GRADLE_FILTER+=(--tests "*BlsTests*")
+    # `BlsTests` in src/ is a registry class with no @Test methods.
+    # Real BLS test classes are generated at build time under packages
+    # `tech.pegasys.teku.reference.bls_*` (e.g. bls_sign, bls_aggregate,
+    # bls_verify, ...). Match the entire package family.
+    GRADLE_FILTER+=(--tests "tech.pegasys.teku.reference.bls_*")
     ;;
   full)
     : # no filter — run everything reference-tests defines
