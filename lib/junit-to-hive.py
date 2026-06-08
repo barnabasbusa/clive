@@ -265,16 +265,38 @@ def main() -> int:
             # `spec/capella/fork_choice/minimal`, `spec/altair/sanity/minimal`
             # rather than one opaque `spec/*/sanity/minimal` row.
             if not suite_category:
-                groups: dict[tuple[str, str, str], list[dict]] = {}
+                # Auto-split: group by (top-label, fork) so we end up with at
+                # most 4 × (#forks + "any") rows per suite. Multiple
+                # state-transition categories under the same preset/fork
+                # collapse into one row labelled e.g. `minimal/altair`.
+                groups: dict[tuple[str, str, str, str], list[dict]] = {}
                 for tc in cases:
                     haystack = f"{tc['classname']}.{tc['name']}"
                     case_category = _scan(haystack, CATEGORIES) or ""
                     case_preset = suite_preset or _scan(haystack, PRESETS) or ""
                     case_fork = suite_fork or _scan(haystack, FORKS) or ""
-                    key = (case_fork, case_preset, case_category)
+                    # Key by the rendered top-label rather than the raw
+                    # category so cases within the same bucket merge cleanly.
+                    top = _top_label(case_category, case_preset)
+                    key = (top, case_fork, case_preset, case_category)
                     groups.setdefault(key, []).append(tc)
-                for (fork, preset, category), group_cases in sorted(groups.items()):
-                    emit_row(fork, preset, category, suite_subcategory, group_cases)
+                # Merge groups that share (top, fork) — multiple raw categories
+                # within e.g. (minimal, altair) collapse into one row.
+                merged: dict[tuple[str, str], dict] = {}
+                for (top, fork, preset, category), group_cases in groups.items():
+                    bucket_key = (top, fork)
+                    bucket = merged.setdefault(bucket_key, {
+                        "cases": [],
+                        "preset": preset,
+                        "category": category,
+                    })
+                    bucket["cases"].extend(group_cases)
+                    # If multiple categories merge into the bucket, the row's
+                    # per-case fields carry the truth; the suite-level
+                    # `category` is informational only.
+                for (top, fork), bucket in sorted(merged.items()):
+                    emit_row(fork, bucket["preset"], bucket["category"],
+                             suite_subcategory, bucket["cases"])
             else:
                 emit_row(suite_fork, suite_preset, suite_category, suite_subcategory, cases)
 
@@ -291,12 +313,34 @@ def main() -> int:
     return 0
 
 
+def _top_label(category: str, preset: str) -> str:
+    """Collapse a (category, preset) pair to one of the four top-level buckets
+    the dashboard renders: mainnet, minimal, forkchoice, other.
+
+    Rationale: granular per-(fork, preset, category) rows produce 200+ entries
+    which is more noise than signal. The collapse keeps the gate categories
+    (state-transition at minimal/mainnet + fork-choice) immediately visible
+    and lumps everything preset-irrelevant (bls, ssz_static, ssz_generic, kzg,
+    light_client) into a single `other` bucket.
+    """
+    if category == "fork_choice":
+        return "forkchoice"
+    if preset == "mainnet":
+        return "mainnet"
+    if preset == "minimal":
+        return "minimal"
+    return "other"
+
+
 def _suite_label(fork: str, category: str, preset: str, subcategory: str) -> str:
-    parts = ["spec", fork or "any", category or "uncategorised"]
+    # `<top>/<fork>` where top is one of mainnet/minimal/forkchoice/other and
+    # fork is phase0..heze (or `any` for preset-irrelevant rows like BLS).
+    # We intentionally drop preset from the label — it's already encoded in
+    # the top-level bucket name.
+    top = _top_label(category, preset)
+    parts = [top, fork or "any"]
     if subcategory:
         parts.append(subcategory)
-    if preset:
-        parts.append(preset)
     return "/".join(parts)
 
 
