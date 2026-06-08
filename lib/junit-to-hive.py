@@ -19,10 +19,13 @@ The output TestRun and TestDetail shapes match
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
+import re
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -100,6 +103,12 @@ def parse_junit(path: Path) -> list[dict]:
         cases.append({
             "name": f"{classname}::{name}" if classname else name,
             "classname": classname,
+            # vitest emits `file=` as an absolute runner path; nextest /
+            # bazel / nim / gradle typically don't emit it at all. Leave
+            # empty when missing — the description-builder falls back to
+            # a GitHub search URL in that case.
+            "file": tc.get("file", ""),
+            "line": tc.get("line", ""),
             "passed": not failed,
             "skipped": skipped,
             "failed": failed,
@@ -107,6 +116,97 @@ def parse_junit(path: Path) -> list[dict]:
             "failure_message": failure_message,
         })
     return cases
+
+
+def _strip_src_prefix(file_path: str, cl_client: str) -> str:
+    """Make an absolute `file=` JUnit attribute relative to the cloned repo.
+
+    Adapters all clone into `${ACTION_PATH}/.cache/<cl_client>/...`, so the
+    distinctive marker is `/.cache/<cl_client>/`. If we can't find it (e.g.
+    the runner already wrote a relative path), pass through unchanged.
+    """
+    if not file_path:
+        return ""
+    marker = f"/.cache/{cl_client}/"
+    idx = file_path.find(marker)
+    if idx >= 0:
+        return file_path[idx + len(marker):]
+    return file_path.lstrip("/")
+
+
+def _build_description(
+    *,
+    tc: dict,
+    cl_client: str,
+    source_repo: str,
+    source_sha: str,
+    source_ref: str,
+    cst_ref: str,
+    preset: str,
+    fork: str,
+    category: str,
+) -> str:
+    """Render the per-testcase Description shown in hive-ui's TestDetail.
+
+    hive-ui renders this through `sanitizeAndRenderHTML` with `pre-wrap`, so
+    HTML anchors render as clickable links and newlines are preserved.
+    """
+    lines: list[str] = []
+
+    # First line: the raw test name. Useful both for grep-by-eye and as a
+    # fallback when neither link target resolves.
+    lines.append(f"<strong>Test:</strong> {html.escape(tc['name'])}")
+
+    # ── Link to the test case in the CL client repo ─────────────────────
+    if source_repo:
+        # Prefer the resolved SHA (immutable) over the user-provided ref.
+        repo_ref = source_sha or source_ref or "master"
+        rel_file = _strip_src_prefix(tc.get("file", ""), cl_client)
+        if rel_file:
+            line_suffix = f"#L{tc['line']}" if tc.get("line") else ""
+            label = html.escape(f"{rel_file}{(':' + tc['line']) if tc.get('line') else ''}")
+            url = (
+                f"https://github.com/{source_repo}/blob/"
+                f"{urllib.parse.quote(repo_ref, safe='/')}/{rel_file}{line_suffix}"
+            )
+            lines.append(
+                f"<strong>Client test:</strong> "
+                f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{label}</a>'
+            )
+        else:
+            # No `file=` attribute → fall back to GitHub code search for the
+            # test name within the client repo. Less precise but always works.
+            query = urllib.parse.quote_plus(tc["name"])
+            url = f"https://github.com/{source_repo}/search?q={query}&type=code"
+            lines.append(
+                f"<strong>Client test:</strong> "
+                f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">'
+                f"search {html.escape(source_repo)}</a>"
+            )
+
+    # ── Link to the spec fixture in ethereum/consensus-spec-tests ───────
+    if cst_ref:
+        # Build the deepest tree path we can justify from suite metadata.
+        path_parts = [p for p in ("tests", preset, fork, category) if p]
+        path = "/".join(path_parts)
+        url = (
+            "https://github.com/ethereum/consensus-spec-tests/tree/"
+            f"{urllib.parse.quote(cst_ref, safe='/')}"
+            + (f"/{path}" if path != "tests" else "")
+        )
+        label_path = "/" + path if path else ""
+        lines.append(
+            f"<strong>Spec fixture:</strong> "
+            f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">'
+            f"consensus-spec-tests@{html.escape(cst_ref)}{html.escape(label_path)}</a>"
+        )
+
+    # ── Failure block (only on actual failures, not skips) ──────────────
+    if tc["failed"] and tc.get("failure_message"):
+        msg = html.escape(tc["failure_message"])
+        lines.append(f"<strong>Failure:</strong>\n<pre>{msg}</pre>")
+
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -128,6 +228,8 @@ def main() -> int:
 
     cl_client = meta["client"]
     source_ref = meta["source_ref"]
+    source_repo = meta.get("source_repo", "")
+    source_sha = meta.get("source_sha", "")
     client_label = f"{cl_client}_{source_ref}"
     client_version = meta["client_version"]
     cst_ref = meta["consensus_spec_tests_ref"]
@@ -162,7 +264,17 @@ def main() -> int:
             case_category = category or _scan(f"{tc['classname']}.{tc['name']}", CATEGORIES)
             test_cases[str(i)] = {
                 "name": tc["name"],
-                "description": "",
+                "description": _build_description(
+                    tc=tc,
+                    cl_client=cl_client,
+                    source_repo=source_repo,
+                    source_sha=source_sha,
+                    source_ref=source_ref,
+                    cst_ref=cst_ref,
+                    preset=case_preset,
+                    fork=case_fork,
+                    category=case_category,
+                ),
                 "start": now_iso,
                 "end": now_iso,
                 "summaryResult": {
