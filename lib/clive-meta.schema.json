@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "$id": "https://raw.githubusercontent.com/ethpandaops/clive/master/lib/clive-meta.schema.json",
+  "title": "clive-meta",
+  "description": "Declarative metadata written by every clive adapter alongside its JUnit XML files. Read by lib/junit-to-hive.py to classify each suite into the hive-ui TestRun schema without heuristics on test names.",
+  "type": "object",
+  "required": ["client", "source_repo", "source_ref", "client_version", "consensus_spec_tests_ref", "network", "suites"],
+  "properties": {
+    "client": {
+      "type": "string",
+      "description": "CL client identifier (e.g. lodestar, lighthouse, nimbus)."
+    },
+    "source_repo": {
+      "type": "string",
+      "description": "GitHub repo the source was cloned from (e.g. ChainSafe/lodestar)."
+    },
+    "source_ref": {
+      "type": "string",
+      "description": "Tag/branch/SHA the source was checked out at (as provided by the caller, post-resolution)."
+    },
+    "source_sha": {
+      "type": "string",
+      "description": "Resolved commit SHA at HEAD after checkout."
+    },
+    "client_version": {
+      "type": "string",
+      "description": "Human-readable version string (e.g. v1.43.0-fcd250cc)."
+    },
+    "consensus_spec_tests_ref": {
+      "type": "string",
+      "description": "Effective consensus-spec-tests release tag (after override / pin resolution)."
+    },
+    "network": {
+      "type": "string",
+      "description": "Devnet/network label."
+    },
+    "suites": {
+      "type": "array",
+      "description": "One entry per JUnit XML file under ${OUT_DIR}/junit/.",
+      "items": {
+        "type": "object",
+        "required": ["junit_file", "category"],
+        "properties": {
+          "junit_file": {
+            "type": "string",
+            "description": "Path relative to ${OUT_DIR}/junit/ (no leading slash)."
+          },
+          "project": {
+            "type": "string",
+            "description": "Client-internal project / suite identifier (e.g. spec-minimal for Lodestar)."
+          },
+          "preset": {
+            "type": "string",
+            "enum": ["minimal", "mainnet", "general", ""],
+            "description": "Preset this suite was run with. Empty when not applicable (e.g. BLS)."
+          },
+          "fork": {
+            "type": "string",
+            "description": "Fork name when this suite tests a single fork (e.g. gloas). Empty when not applicable or when the suite mixes forks (in which case junit-to-hive.py falls back to per-testcase name parsing)."
+          },
+          "category": {
+            "type": "string",
+            "description": "Spec test category: sanity | operations | epoch_processing | transition | random | finality | fork_choice | rewards | shuffling | ssz_generic | ssz_static | bls | kzg | light_client | merkle_proof | genesis. Anything else is allowed but won't render specially in the hive-ui CL view."
+          },
+          "subcategory": {
+            "type": ["string", "null"],
+            "description": "Optional finer-grained label (e.g. blocks under sanity)."
+          }
+        }
+      }
+    }
+  }
+}

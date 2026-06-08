@@ -20,6 +20,12 @@ case "${CL_CLIENT}" in
   lodestar)
     DEFAULT_REPO="ChainSafe/lodestar"
     ;;
+  lighthouse)
+    DEFAULT_REPO="sigp/lighthouse"
+    ;;
+  nimbus)
+    DEFAULT_REPO="status-im/nimbus-eth2"
+    ;;
   *)
     echo "::error::unsupported cl_client: ${CL_CLIENT}"
     exit 1

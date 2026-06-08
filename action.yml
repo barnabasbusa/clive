@@ -85,9 +85,9 @@ runs:
         CL_CLIENT: ${{ inputs.cl_client }}
       run: |
         case "$CL_CLIENT" in
-          lodestar) ;;
+          lodestar|lighthouse|nimbus) ;;
           *)
-            echo "::error::clive v0 only supports cl_client=lodestar (got: $CL_CLIENT)"
+            echo "::error::clive does not yet support cl_client=${CL_CLIENT}; supported: lodestar, lighthouse, nimbus"
             exit 1
             ;;
         esac
@@ -104,15 +104,37 @@ runs:
         GH_TOKEN: ${{ github.token }}
       run: ${{ github.action_path }}/lib/resolve.sh
 
-    - name: Set up Node
+    # --- Per-client toolchain setup ------------------------------------------
+    - name: Set up Node (Lodestar)
+      if: inputs.cl_client == 'lodestar'
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
-        # Lodestar's package.json#engines pins ^24.13.0; bumping per-adapter
-        # if a future client needs a different LTS.
         node-version: '24'
 
+    - name: Set up Rust (Lighthouse)
+      if: inputs.cl_client == 'lighthouse'
+      uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+      with:
+        toolchain: stable
+
+    - name: Install cargo-nextest (Lighthouse)
+      if: inputs.cl_client == 'lighthouse'
+      uses: taiki-e/install-action@9ca1734d8940023f074414ee621fd530c4ce10f2 # v2.62.46
+      with:
+        tool: cargo-nextest
+
+    - name: Install Nim build deps (Nimbus)
+      if: inputs.cl_client == 'nimbus' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential git wget pkg-config libssl-dev libpcre3-dev libgmp-dev
+
+    # --- Per-client adapter dispatch ----------------------------------------
     - name: Run Lodestar spec tests
-      id: run
+      id: run_lodestar
+      if: inputs.cl_client == 'lodestar'
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
@@ -123,16 +145,37 @@ runs:
         NETWORK: ${{ inputs.network }}
       run: ${{ github.action_path }}/adapters/lodestar.sh
 
+    - name: Run Lighthouse spec tests
+      id: run_lighthouse
+      if: inputs.cl_client == 'lighthouse'
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        OUT_DIR: ${{ github.action_path }}/out
+        CL_SOURCE_REPO: ${{ steps.resolve.outputs.cl_source_repo }}
+        CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
+        CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
+        NETWORK: ${{ inputs.network }}
+      run: ${{ github.action_path }}/adapters/lighthouse.sh
+
+    - name: Run Nimbus spec tests
+      id: run_nimbus
+      if: inputs.cl_client == 'nimbus'
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        OUT_DIR: ${{ github.action_path }}/out
+        CL_SOURCE_REPO: ${{ steps.resolve.outputs.cl_source_repo }}
+        CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
+        CONSENSUS_SPEC_TESTS_REF: ${{ inputs.consensus_spec_tests_ref }}
+        NETWORK: ${{ inputs.network }}
+      run: ${{ github.action_path }}/adapters/nimbus.sh
+
     - name: Normalise results into hive-ui schema
       id: summarize
       shell: bash
       env:
         OUT_DIR: ${{ github.action_path }}/out
-        CL_CLIENT: ${{ inputs.cl_client }}
-        CL_SOURCE_REF: ${{ steps.resolve.outputs.cl_source_ref }}
-        CONSENSUS_SPEC_TESTS_REF: ${{ steps.run.outputs.consensus_spec_tests_ref }}
-        NETWORK: ${{ inputs.network }}
-        CLIENT_VERSION: ${{ steps.run.outputs.client_version }}
       run: ${{ github.action_path }}/lib/junit-to-hive.py
 
     - name: Setup rclone for S3 upload

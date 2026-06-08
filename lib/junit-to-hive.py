@@ -1,24 +1,19 @@
 #!/usr/bin/env python3
 """
-Normalise JUnit XML emitted by a CL client's spec-test runner into
+Normalise per-suite JUnit XML emitted by a clive adapter into
 hive-ui-compatible artefacts:
 
-  ${OUT_DIR}/results/<fileName>.json   - one TestDetail per (category, preset, fork)
-  ${OUT_DIR}/listing-fragment.jsonl    - one TestRun row per file above
+  ${OUT_DIR}/results/<fileName>.json   - one TestDetail per suite
+  ${OUT_DIR}/listing-fragment.jsonl    - one TestRun row per suite
 
-The schema matches what hive-ui reads via
-``fetchTestRuns`` / ``fetchTestDetail`` in ``src/services/api.ts``.
+Reads ${OUT_DIR}/clive-meta.json (see lib/clive-meta.schema.json) as the
+authoritative description of what each JUnit file contains. Per-testcase
+classification (preset/fork/category) inherits the suite-level declaration
+in clive-meta; falls back to substring heuristics on classname+name only if
+the meta is missing the relevant field for a suite.
 
-Inputs (env):
-  OUT_DIR                  - same dir adapters wrote junit/ + lodestar.log to
-  CL_CLIENT                - e.g. ``lodestar``
-  CL_SOURCE_REF            - source ref the client was built at
-  CLIENT_VERSION           - resolved version string (incl. short SHA)
-  CONSENSUS_SPEC_TESTS_REF - fixtures version the runner tested against
-  NETWORK                  - devnet label
-
-Outputs ($GITHUB_OUTPUT):
-  ntests, passes, fails - aggregated totals across all files
+The output TestRun and TestDetail shapes match
+``ethpandaops/hive-ui`` `src/types/index.ts`.
 """
 
 from __future__ import annotations
@@ -26,10 +21,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import sys
 import time
-from collections import defaultdict
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -53,44 +46,61 @@ CATEGORIES = (
 )
 
 PRESETS = ("minimal", "mainnet", "general")
-# Loose fork name list; matched best-effort against test names.
+
 FORKS = (
     "phase0", "altair", "bellatrix", "capella", "deneb",
     "electra", "fulu", "gloas", "heze",
 )
 
 
+def _scan(haystack: str, candidates: tuple[str, ...]) -> str:
+    haystack = haystack.lower()
+    for c in candidates:
+        if c in haystack:
+            return c
+    return ""
+
+
 def env(name: str, default: str = "") -> str:
     return os.environ.get(name, default) or default
 
 
-def classify(test_name: str, classname: str) -> tuple[str, str, str]:
-    """Best-effort category/preset/fork extraction from JUnit identifiers.
+def count_results(test_cases: list[dict]) -> tuple[int, int, int, int]:
+    ntests = len(test_cases)
+    passes = sum(1 for t in test_cases if t["passed"])
+    fails = sum(1 for t in test_cases if t["failed"])
+    skipped = sum(1 for t in test_cases if t["skipped"])
+    return ntests, passes, fails, skipped
 
-    JUnit emitters vary across vitest/mocha/cargo-test; the most reliable
-    signal we have is substring presence in the combined classname+name.
-    """
-    haystack = f"{classname}.{test_name}".lower()
 
-    category = "unknown"
-    for c in CATEGORIES:
-        if c in haystack:
-            category = c
-            break
+def parse_junit(path: Path) -> list[dict]:
+    """Return a flat list of testcase dicts across all testsuites in `path`."""
+    try:
+        tree = ElementTree.parse(path)
+    except ElementTree.ParseError as e:
+        print(f"::warning::failed to parse {path}: {e}", file=sys.stderr)
+        return []
 
-    preset = "unknown"
-    for p in PRESETS:
-        if p in haystack:
-            preset = p
-            break
-
-    fork = "unknown"
-    for f in FORKS:
-        if f in haystack:
-            fork = f
-            break
-
-    return category, preset, fork
+    cases = []
+    for tc in tree.iter("testcase"):
+        name = tc.get("name", "")
+        classname = tc.get("classname", "")
+        failure_el = tc.find("failure") if tc.find("failure") is not None else tc.find("error")
+        failed = failure_el is not None
+        skipped = tc.find("skipped") is not None
+        failure_message = ""
+        if failed:
+            failure_message = (failure_el.text or "").strip() or (failure_el.get("message", "") or "")
+        cases.append({
+            "name": f"{classname}::{name}" if classname else name,
+            "classname": classname,
+            "passed": not (failed or skipped),
+            "skipped": skipped,
+            "failed": failed,
+            "time": float(tc.get("time") or 0.0),
+            "failure_message": failure_message,
+        })
+    return cases
 
 
 def main() -> int:
@@ -99,74 +109,62 @@ def main() -> int:
         print(f"::error::OUT_DIR does not exist: {out_dir}", file=sys.stderr)
         return 1
 
+    meta_path = out_dir / "clive-meta.json"
+    if not meta_path.exists():
+        print(f"::error::clive-meta.json missing at {meta_path}; adapters must write it.", file=sys.stderr)
+        return 1
+    meta = json.loads(meta_path.read_text())
+
     junit_dir = out_dir / "junit"
     results_dir = out_dir / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
     listing_path = out_dir / "listing-fragment.jsonl"
 
-    cl_client = env("CL_CLIENT", "lodestar")
-    cl_source_ref = env("CL_SOURCE_REF", "")
-    client_version = env("CLIENT_VERSION", cl_source_ref)
-    cst_ref = env("CONSENSUS_SPEC_TESTS_REF", "")
-    network = env("NETWORK", "unknown")
+    cl_client = meta["client"]
+    source_ref = meta["source_ref"]
+    client_label = f"{cl_client}_{source_ref}"
+    client_version = meta["client_version"]
+    cst_ref = meta["consensus_spec_tests_ref"]
+    network = meta["network"]
 
-    client_label = f"{cl_client}_{cl_source_ref}"
-
-    # Group test cases by (category, preset, fork)
-    buckets: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
-
-    xml_files = sorted(junit_dir.glob("*.xml")) if junit_dir.exists() else []
-    if not xml_files:
-        print(f"::warning::no JUnit XML files found under {junit_dir}", file=sys.stderr)
-
-    for xml_path in xml_files:
-        try:
-            tree = ElementTree.parse(xml_path)
-        except ElementTree.ParseError as e:
-            print(f"::warning::failed to parse {xml_path}: {e}", file=sys.stderr)
-            continue
-
-        for tc in tree.iter("testcase"):
-            name = tc.get("name", "")
-            classname = tc.get("classname", "")
-            failure = tc.find("failure") is not None or tc.find("error") is not None
-            skipped = tc.find("skipped") is not None
-            category, preset, fork = classify(name, classname)
-
-            buckets[(category, preset, fork)].append({
-                "name": f"{classname}::{name}" if classname else name,
-                "classname": classname,
-                "passed": (not failure) and (not skipped),
-                "skipped": skipped,
-                "failed": failure,
-                "time": float(tc.get("time") or 0.0),
-                "failure_message": (
-                    (tc.find("failure").text or "") if tc.find("failure") is not None
-                    else (tc.find("error").text or "") if tc.find("error") is not None
-                    else ""
-                ),
-            })
+    suites = meta.get("suites") or []
+    if not suites:
+        print(f"::warning::clive-meta.json declares zero suites; nothing to normalise", file=sys.stderr)
 
     total_ntests = total_passes = total_fails = 0
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     timestamp_prefix = int(time.time())
 
     with listing_path.open("w") as listing_fp:
-        for (category, preset, fork), tests in sorted(buckets.items()):
-            ntests = len(tests)
-            fails = sum(1 for t in tests if t["failed"])
-            passes = sum(1 for t in tests if t["passed"])
-            skipped = sum(1 for t in tests if t["skipped"])
+        for suite in suites:
+            junit_file = suite["junit_file"]
+            xml_path = junit_dir / junit_file
+            if not xml_path.exists():
+                print(f"::warning::clive-meta references missing JUnit file: {xml_path}", file=sys.stderr)
+                continue
+
+            cases = parse_junit(xml_path)
+            ntests, passes, fails, skipped = count_results(cases)
             total_ntests += ntests
             total_passes += passes
             total_fails += fails
 
-            slug = f"{cl_client}-{category}-{preset}-{fork}"
+            suite_preset = suite.get("preset", "")
+            suite_fork = suite.get("fork", "")
+            suite_category = suite.get("category", "")
+            suite_subcategory = suite.get("subcategory") or ""
+
+            # Build a stable file name for the TestDetail.
+            slug = f"{cl_client}-{suite_category}-{suite_preset}-{suite_fork}-{suite_subcategory}".strip("-")
             digest = hashlib.sha1(slug.encode()).hexdigest()[:12]
             file_name = f"{timestamp_prefix}-{digest}.json"
 
             test_cases = {}
-            for i, tc in enumerate(tests, start=1):
+            for i, tc in enumerate(cases, start=1):
+                # Inherit suite-level classification; allow per-case override via heuristic.
+                case_fork = suite_fork or _scan(f"{tc['classname']}.{tc['name']}", FORKS)
+                case_preset = suite_preset or _scan(f"{tc['classname']}.{tc['name']}", PRESETS)
+                case_category = suite_category or _scan(f"{tc['classname']}.{tc['name']}", CATEGORIES)
                 test_cases[str(i)] = {
                     "name": tc["name"],
                     "description": "",
@@ -185,33 +183,40 @@ def main() -> int:
                             "logFile": "",
                         },
                     },
-                    # Extra context for hive-ui's drill-in / CL matrix view.
-                    "failureMessage": tc.get("failure_message", "") if tc["failed"] else "",
+                    "failureMessage": tc["failure_message"] if tc["failed"] else "",
                     "skipped": tc["skipped"],
                     "durationSeconds": tc["time"],
+                    "fork": case_fork,
+                    "preset": case_preset,
+                    "category": case_category,
                 }
 
             detail = {
                 "id": 0,
-                "name": f"spec/{fork}/{category}/{preset}",
+                "name": _suite_label(suite_fork, suite_category, suite_preset, suite_subcategory),
                 "description": (
-                    f"Consensus spec tests for {category} ({preset}, {fork}) "
-                    f"on {cl_client} {client_version}, fixtures {cst_ref}."
+                    f"Consensus spec tests for {suite_category}"
+                    f"{' / ' + suite_subcategory if suite_subcategory else ''}"
+                    f" ({suite_preset or '–'}, {suite_fork or '–'})"
+                    f" on {cl_client} {client_version}, fixtures {cst_ref}."
                 ),
                 "clientVersions": {client_label: client_version},
                 "testCases": test_cases,
-                "simLog": "lodestar.log",
+                "simLog": f"{cl_client}.log",
                 "testDetailsLog": "",
                 "runMetadata": {
                     "clive": {
                         "client": cl_client,
-                        "source_ref": cl_source_ref,
+                        "source_ref": source_ref,
+                        "source_sha": meta.get("source_sha", ""),
                         "client_version": client_version,
                         "consensus_spec_tests_ref": cst_ref,
                         "network": network,
-                        "category": category,
-                        "preset": preset,
-                        "fork": fork,
+                        "category": suite_category,
+                        "subcategory": suite_subcategory,
+                        "preset": suite_preset,
+                        "fork": suite_fork,
+                        "project": suite.get("project", ""),
                     },
                 },
             }
@@ -219,7 +224,7 @@ def main() -> int:
             (results_dir / file_name).write_text(json.dumps(detail))
 
             row = {
-                "name": f"spec/{fork}/{category}",
+                "name": _suite_label(suite_fork, suite_category, suite_preset, suite_subcategory),
                 "ntests": ntests,
                 "passes": passes,
                 "fails": fails,
@@ -229,11 +234,11 @@ def main() -> int:
                 "start": now_iso,
                 "fileName": file_name,
                 "size": (results_dir / file_name).stat().st_size,
-                "simLog": "lodestar.log",
-                # Additive optional fields for hive-ui's CL view.
-                "category": category,
-                "preset": preset,
-                "fork": fork,
+                "simLog": f"{cl_client}.log",
+                "category": suite_category,
+                "subcategory": suite_subcategory,
+                "preset": suite_preset,
+                "fork": suite_fork,
                 "skipped": skipped,
                 "consensus_spec_tests_ref": cst_ref,
                 "network": network,
@@ -247,10 +252,19 @@ def main() -> int:
             fp.write(f"passes={total_passes}\n")
             fp.write(f"fails={total_fails}\n")
 
-    print(f"clive: wrote {len(buckets)} TestRun row(s) "
+    print(f"clive: wrote {len(suites)} TestRun row(s) "
           f"({total_passes}/{total_ntests} passing, {total_fails} fail) "
           f"to {listing_path}")
     return 0
+
+
+def _suite_label(fork: str, category: str, preset: str, subcategory: str) -> str:
+    parts = ["spec", fork or "*", category or "?"]
+    if subcategory:
+        parts.append(subcategory)
+    if preset:
+        parts.append(preset)
+    return "/".join(parts)
 
 
 if __name__ == "__main__":
